@@ -58,8 +58,7 @@
 
 <br clear="both">
 
-<img src="https://raw.githubusercontent.com/Deskime/Deskime/output/snake.svg" alt="Snake animation" />
-<br><br>
+
 [![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=dark)](https://github.com/piyushsuthar/github-readme-quotes)
 
 <div align="center">
