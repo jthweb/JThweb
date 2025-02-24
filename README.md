@@ -1,4 +1,4 @@
-<h2 align="left">👋🏻Hi! Deskime is your one-stop Desktop Customization App!</h2>
+<h2 align="left">👋🏻Hi! Check out my projects!</h2>
 
 ###
 
