@@ -58,11 +58,9 @@
 
 ### 📊 My GitHub Stats
 
-<div align="center">
   ![jthweb's Stats](https://github-readme-stats.vercel.app/api?username=jthweb&theme=vue-dark&show_icons=true&hide_border=true&count_private=true)
   ![jthweb's Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=jthweb&theme=vue-dark&show_icons=true&hide_border=true&layout=compact)
   ![jthweb's Streak](https://github-readme-streak-stats.herokuapp.com/?user=jthweb&theme=vue-dark&hide_border=true)
-</div>
 
 ---
 
