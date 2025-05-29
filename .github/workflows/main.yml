@@ -16,11 +16,7 @@ jobs:
           # github user name to read the contribution graph from (**required**)
           # using action context var `github.repository_owner` or specified user
           github_user_name: ${{ github.repository_owner }}
-
-          outputs: |
-            dist/github-snake.svg
-            dist/github-snake-dark.svg
-            dist/github-contribution-grid-snake.gif
+          svg: snake.svg
 
 
       - name: push github-contribution-grid-snake.svg to the output branch
