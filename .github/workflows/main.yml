@@ -1,15 +1,30 @@
 # GitHub Action for generating a contribution graph with a snake eating your contributions.
 
-name: Generate Snake
+name: Generate Snake Contribution Graph
 
-    # Generates the snake  
-- uses: Platane/snk@v3
-  with:
-    github_user_name: ${{ github.repository_owner }}
-    outputs: |
-      dist/github-snake.svg
-      dist/github-snake-dark.svg?palette=github-dark
-      dist/ocean.gif?color_snake=orange&color_dots=#bfd6f6,#8dbdff,#64a1f4,#4b91f1,#3c7dd9
-      
-# show the status of the build. Makes it easier for debugging (if there's any issues).
-- run: git status
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  workflow_dispatch:
+
+jobs:
+  update-snake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Generate Snake Contribution Graph
+        uses: platane/snk@v2
+        with:
+          github_user_name: JThweb
+          # Optional settings
+          svg: true
+          scale: 3
+
+      - name: Commit and push Snake Contribution Graph
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: 'snake.svg'
+          message: 'Update Snake contribution graph'
+        
