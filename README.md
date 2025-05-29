@@ -64,6 +64,8 @@
 
 ---
 
+![snake gif](https://github.com/JThweb/JThweb/blob/output/github-contribution-grid-snake.gif)
+
 <div align="center">
   <img src="https://profile-counter.glitch.me/jthweb/count.svg?" alt="Profile Views" />
 </div>
