@@ -1,5 +1,5 @@
 <div align="center">
-  <img height="150" src="JThweb.png" />
+  <img src="JThweb.png" />
 </div>
 
 ---
