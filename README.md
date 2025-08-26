@@ -21,7 +21,7 @@
 
 - 🏫 High school student passionate about tech.
 - 💻 Love tinkering with software, UI/UX, and automation.
-- 🔨 Currently working on **Deskime Browser** (BETA) using Qt WebEngine.
+- 🔨 Currently working on **Flight Logging System** for Flight Simulator Airlines.
 - 🎯 Learning more about **system customization, scripting, and web technologies**.
 
 ---
