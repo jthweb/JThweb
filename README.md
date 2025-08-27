@@ -15,7 +15,7 @@
 
 ----
 
-<h1 align="center">Hey there! 👋</h1>
+<h1 align="center">Hey there!👋</h1>
 
 ### 🚀 About Me
 
@@ -65,9 +65,5 @@
 ---
 
 ![snake gif](https://github.com/JThweb/JThweb/blob/output/github-contribution-grid-snake.svg)
-
-<div align="center">
-  <img src="https://profile-counter.glitch.me/jthweb/count.svg?" alt="Profile Views" />
-</div>
 
 ---
