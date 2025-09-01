@@ -22,8 +22,8 @@
 - 🏫 **High school student** passionate about technology and innovation
 - 💻 **Full-stack developer** specializing in web technologies, UI/UX design, and automation
 - 🔨 **Currently working on:**
-  - **BPS Circular API** - Enterprise workflow automation platform
-  - **Flight Logging System** for Flight Simulator Airlines
+  - **BPS Circular API** - Circular API system for my school
+  - **Flight Logging System** for Virtual Airlines in Flight Sims.
   - **Custom automation scripts** for development productivity
 - 🎯 **Learning & exploring:**
   - System customization and scripting
@@ -40,17 +40,17 @@
     <tr>
       <td align="center" width="300">
         <h4>🔄 BPS Circular API</h4>
-        <p>RESTful API for managing circular business processes and workflow automation. Built with modern web technologies for scalable enterprise solutions.</p>
+        <p>FastAPI software for sending latest school circular via multiple communication platforms.</p>
         <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" />
       </td>
       <td align="center" width="300">
         <h4>✈️ Flight Logging System</h4>
-        <p>Comprehensive flight management system for Flight Simulator Airlines with real-time tracking and reporting capabilities.</p>
+        <p>Comprehensive flight management system for Virtual FlightSim Airlines with real-time tracking and reporting capabilities.</p>
         <img src="https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge" />
       </td>
     </tr>
     <tr>
-      <td align="center" width="300">
+      <!--<td align="center" width="300">
         <h4>🎨 UI/UX Projects</h4>
         <p>Custom interface designs and user experience optimization projects focusing on modern, accessible design principles.</p>
         <img src="https://img.shields.io/badge/Status-Ongoing-blue?style=for-the-badge" />
@@ -60,7 +60,7 @@
         <p>Collection of automation tools and scripts for system customization, workflow optimization, and development productivity.</p>
         <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" />
       </td>
-    </tr>
+    </tr>-->
   </table>
 </div>
 
