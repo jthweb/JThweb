@@ -81,11 +81,8 @@
       <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/php/php-original.svg" height="50"/><br>PHP</td>
       <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mysql/mysql-original.svg" height="50"/><br>MySQL</td>
       <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/qt/qt-original.svg" height="50"/><br>Qt</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/lua/lua-original.svg" height="50"/><br>Lua</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/opencv/opencv-original.svg" height="50"/><br>OpenCV</td>
-    </tr>
-    <tr>
       <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg" height="50"/><br>React</td>
+      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/opencv/opencv-original.svg" height="50"/><br>OpenCV</td>
     </tr>
     <tr>
       <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/numpy/numpy-original.svg" height="50"/><br>NumPy</td>
