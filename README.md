@@ -44,9 +44,9 @@
         <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" />
       </td>
       <td align="center" width="300">
-        <h4>✈️ Flight Logging System</h4>
-        <p>Comprehensive flight management system for Virtual FlightSim Airlines with real-time tracking and reporting capabilities.</p>
-        <img src="https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge" />
+        <h4>✈️ SAW Flight Logger System</h4>
+        <p>Comprehensive flight logging system for GeoFS Airlines with real-time tracking and reporting capabilities.</p>
+        <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge"" />
       </td>
     </tr>
     <tr>
