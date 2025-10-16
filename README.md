@@ -24,12 +24,10 @@
 - 🔨 **Currently working on:**
   - **BPS Circular API** - Circular API system for my school
   - **Flight Logging System** for Virtual Airlines in Flight Sims.
-  - **Custom automation scripts** for development productivity
 - 🎯 **Learning & exploring:**
   - System customization and scripting
   - Modern web frameworks and APIs
   - 3D modeling and CAD design with Fusion 360
-  - Cloud technologies and DevOps practices
 
 ---
 
