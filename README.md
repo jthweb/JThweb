@@ -63,49 +63,7 @@
 </div>
 
 ---
-
-### 🛠️ Languages & Tools
-
-<div align="center">
-  <table>
-    <tr>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" height="50"/><br>Python</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg" height="50"/><br>JavaScript</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/html5/html5-original.svg" height="50"/><br>HTML5</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/css3/css3-original.svg" height="50"/><br>CSS3</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/bootstrap/bootstrap-original.svg" height="50"/><br>Bootstrap</td>
-    </tr>
-    <tr>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/php/php-original.svg" height="50"/><br>PHP</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mysql/mysql-original.svg" height="50"/><br>MySQL</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/qt/qt-original.svg" height="50"/><br>Qt</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg" height="50"/><br>React</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/opencv/opencv-original.svg" height="50"/><br>OpenCV</td>
-    </tr>
-    <tr>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/numpy/numpy-original.svg" height="50"/><br>NumPy</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/pandas/pandas-original.svg" height="50"/><br>Pandas</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/jupyter/jupyter-original.svg" height="50"/><br>Jupyter</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/vscode/vscode-original.svg" height="50"/><br>VS Code</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/jetbrains/jetbrains-original.svg" height="50"/><br>JetBrains</td>
-    </tr>
-    <tr>
-      <td align="center" width="100"><img src="https://img.icons8.com/color/48/000000/autodesk-fusion-360.png" height="50"/><br>Fusion 360</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg" height="50"/><br>Git</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg" height="50"/><br>Docker</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/linux/linux-original.svg" height="50"/><br>Linux</td>
-      <td align="center" width="100"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nodejs/nodejs-original.svg" height="50"/><br>Node.js</td>
-    </tr>
-  </table>
-</div>
-
----
-
-### 📊 My GitHub Stats
-
-  ![jthweb's Stats](https://github-readme-stats.vercel.app/api?username=jthweb&theme=vue-dark&show_icons=true&hide_border=true&count_private=true)<br>
-  ![jthweb's Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=jthweb&theme=vue-dark&show_icons=true&hide_border=true&layout=compact)<br>
-  ![jthweb's Streak](https://github-readme-streak-stats.herokuapp.com/?user=jthweb&theme=vue-dark&hide_border=true)
+![jthweb's Streak](https://github-readme-streak-stats.herokuapp.com/?user=jthweb&theme=vue-dark&hide_border=true)
 
 ---
 
