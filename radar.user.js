@@ -129,6 +129,8 @@
   // --- Global Variables ---
   let flightInfo = { departure: '', arrival: '', flightNo: '', squawk: '', registration: '' };
   let isTransponderActive = false;
+  let prevAltMSL = null;
+  let prevAltTs = null;
   
   // Load saved flight info
   try {
@@ -143,7 +145,7 @@
   let wasOnGround = true;
   let takeoffTimeUTC = '';
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '1.9.6';
+  const CURRENT_VERSION = '1.9.7';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -152,7 +154,7 @@
     .then(data => {
       if (data.version && data.version !== CURRENT_VERSION) {
         showModal(
-          `🚩 GeoFS flightradar receiver new version available (${data.version})!<br>Please reinstall the latest user.js from GitHub.`,
+          `✈️ GeoFS FlightRadar receiver new version available (${data.version})!<br>Please reinstall the latest user.js from GitHub.`,
           null,
           UPDATE_URL
         );
@@ -271,6 +273,7 @@
       const altMSL = (typeof altMeters === 'number') ? altMeters * 3.28084 : geofs?.animation?.values?.altitude ?? 0;
       const altAGL = calculateAGL();
       const heading = geofs?.animation?.values?.heading360 ?? 0;
+      const now = Date.now();
       
       // Try to get ground speed first (m/s -> knots), then KIAS
       let speed = 0;
@@ -283,7 +286,32 @@
           speed = geofs.aircraft.instance.trueAirSpeed * 1.94384;
       }
 
-      return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)) };
+      let vsFpm = 0;
+      const vsRaw = geofs?.animation?.values?.verticalSpeed ??
+                   geofs?.animation?.values?.verticalVelocity ??
+                   geofs?.animation?.values?.verticalSpeedFPM ??
+                   geofs?.animation?.values?.verticalSpeedFpm ??
+                   geofs?.animation?.values?.vs;
+
+      if (typeof vsRaw === 'number') {
+        const abs = Math.abs(vsRaw);
+        // If the magnitude is small, assume m/s and convert; otherwise assume already fpm
+        vsFpm = abs <= 50 ? Math.round(vsRaw * 196.8504) : Math.round(vsRaw);
+      }
+
+      if (!vsFpm && typeof altMSL === 'number') {
+        const dtMs = now - (prevAltTs || now);
+        if (dtMs > 0 && prevAltMSL !== null) {
+          vsFpm = Math.round((altMSL - prevAltMSL) / (dtMs / 60000));
+        }
+        prevAltMSL = altMSL;
+        prevAltTs = now;
+      } else {
+        prevAltMSL = altMSL;
+        prevAltTs = now;
+      }
+
+      return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)), verticalSpeedFpm: vsFpm };
     } catch (e) {
       console.warn('[ATC-Reporter] readSnapshot error:', e);
       return null;
@@ -319,6 +347,9 @@ function buildPayload(snap) {
     altMSL: Math.round(snap.altMSL || 0),
     heading: Math.round(snap.heading || 0),
     speed: Math.round(snap.speed || 0),
+    verticalSpeed: snap.verticalSpeedFpm || 0,
+    verticalSpeedFpm: snap.verticalSpeedFpm || 0,
+    vs: snap.verticalSpeedFpm || 0,
     flightNo: flightInfo.flightNo,
     registration: flightInfo.registration,
     departure: flightInfo.departure,
