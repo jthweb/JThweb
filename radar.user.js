@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      2.0.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -145,7 +145,7 @@
   let wasOnGround = true;
   let takeoffTimeUTC = '';
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '1.9.7';
+  const CURRENT_VERSION = '2.0.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -396,30 +396,6 @@ function buildPayload(snap) {
     }, 2000);
   }
 
-  // --- Screenshot Capture ---
-  function captureAndSendScreenshot() {
-      try {
-          const canvas = document.querySelector('canvas');
-          if (canvas) {
-              // Use lower quality to save bandwidth
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
-              safeSend({ type: 'screenshot', payload: dataUrl });
-              log('Screenshot sent');
-          }
-      } catch (e) {
-          console.warn('[ATC-Reporter] Screenshot failed', e);
-      }
-  }
-
-  // Send screenshot shortly after connection (once per session)
-  let screenshotSent = false;
-  setInterval(() => {
-      if (ws && ws.readyState === 1 && !screenshotSent && geofs && geofs.aircraft && geofs.aircraft.instance) {
-          // Wait until we are actually in a flight (aircraft loaded)
-          captureAndSendScreenshot();
-          screenshotSent = true;
-      }
-  }, 5000);
 
   // --- UI Injection ---
   function injectFlightUI() {
@@ -435,13 +411,13 @@ function buildPayload(snap) {
         .geofs-radar-panel {
           font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           width: 240px;
-          background: rgba(15, 23, 42, 0.9);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(22, 25, 32, 0.65);
+          backdrop-filter: blur(12px) saturate(180%);
+          -webkit-backdrop-filter: blur(12px) saturate(180%);
+          border: 1px solid rgba(255, 255, 255, 0.12);
           border-radius: 16px;
           padding: 20px;
-          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
           color: #e2e8f0;
           transition: opacity 0.2s ease;
         }
@@ -449,7 +425,7 @@ function buildPayload(snap) {
           font-size: 11px;
           text-transform: uppercase;
           letter-spacing: 2px;
-          color: #94a3b8;
+          color: rgba(255, 255, 255, 0.8);
           margin-bottom: 16px;
           font-weight: 800;
           display: flex;
@@ -457,6 +433,7 @@ function buildPayload(snap) {
           align-items: center;
           cursor: move;
           user-select: none;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         .geofs-radar-header-controls {
             display: flex;
@@ -465,7 +442,7 @@ function buildPayload(snap) {
         }
         .geofs-radar-min-btn {
             cursor: pointer;
-            color: #64748b;
+            color: rgba(255, 255, 255, 0.6);
             transition: color 0.2s;
             font-size: 14px;
             line-height: 1;
@@ -473,7 +450,7 @@ function buildPayload(snap) {
         }
         .geofs-radar-min-btn:hover { color: #fff; }
         .geofs-radar-status {
-            width: 8px; height: 8px; background: #64748b; border-radius: 50%; box-shadow: none; transition: all 0.3s;
+            width: 8px; height: 8px; background: #64748b; border-radius: 50%; box-shadow: 0 0 8px rgba(100, 116, 139, 0.5); transition: all 0.3s;
         }
         .geofs-radar-grid {
           display: grid;
@@ -488,12 +465,13 @@ function buildPayload(snap) {
         }
         .geofs-radar-label {
           font-size: 10px;
-          color: #64748b;
+          color: rgba(255, 255, 255, 0.5);
           font-weight: 700;
           text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
         .geofs-radar-input {
-          background: rgba(0, 0, 0, 0.2);
+          background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.1);
           border-radius: 8px;
           padding: 8px 10px;
@@ -508,16 +486,16 @@ function buildPayload(snap) {
         }
         .geofs-radar-input:focus {
           outline: none;
-          border-color: #3b82f6;
-          background: rgba(0, 0, 0, 0.4);
+          border-color: rgba(59, 130, 246, 0.5);
+          background: rgba(255, 255, 255, 0.1);
           box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
         .geofs-radar-btn {
           width: 100%;
-          background: linear-gradient(135deg, #3b82f6, #2563eb);
-          border: none;
+          background: rgba(59, 130, 246, 0.2);
+          border: 1px solid rgba(59, 130, 246, 0.3);
           border-radius: 8px;
-          color: white;
+          color: #60a5fa;
           padding: 10px;
           font-size: 12px;
           font-weight: 700;
@@ -525,10 +503,13 @@ function buildPayload(snap) {
           letter-spacing: 0.5px;
           text-transform: uppercase;
           transition: all 0.2s;
-          box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+          backdrop-filter: blur(4px);
         }
         .geofs-radar-btn:hover {
-          box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
+          background: rgba(59, 130, 246, 0.3);
+          border-color: rgba(59, 130, 246, 0.5);
+          color: #fff;
+          box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
           transform: translateY(-1px);
         }
         .geofs-radar-btn:active {
