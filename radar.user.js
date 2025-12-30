@@ -145,7 +145,7 @@
     // ======= Update check (English) =======
   const CURRENT_VERSION = '1.9.6';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
-  const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/userscript.js';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
   fetch(VERSION_JSON_URL)
     .then(r => r.json())
