@@ -20,7 +20,7 @@
   const SEND_INTERVAL_MS = 500;
   /*************/
 
-    // ===== 新增 Modal 函數 =====
+    // ===== Modal Function =====
   function showModal(msg, duration = null, updateBtnUrl = null) {
     if (document.getElementById("geofs-atc-modal")) return;
     let overlay = document.createElement("div");
@@ -126,7 +126,7 @@
     console.log('[ATC-Reporter]', ...args);
   }
 
-  // --- 全域變數 ---
+  // --- Global Variables ---
   let flightInfo = { departure: '', arrival: '', flightNo: '', squawk: '', registration: '' };
   let isTransponderActive = false;
   
@@ -143,7 +143,7 @@
   let wasOnGround = true;
   let takeoffTimeUTC = '';
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '1.9.5';
+  const CURRENT_VERSION = '1.9.6';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/userscript.js';
 (function checkUpdate() {
@@ -160,7 +160,7 @@
     })
     .catch(() => {});
 })();
-  // --- WebSocket 管理 ---
+  // --- WebSocket Management ---
   let ws;
   function connect() {
     const statusDot = document.querySelector('.geofs-radar-status');
@@ -201,7 +201,7 @@
     }
   }
 
-  // --- 工具函式 ---
+  // --- Utility Functions ---
   function getAircraftName() {
     try {
         // Try multiple sources for aircraft name
@@ -216,7 +216,7 @@
   function getPlayerCallsign() {
     return geofs?.userRecord?.callsign || 'Unknown';
   }
-  // --- AGL 計算 ---
+  // --- AGL Calculation ---
   function calculateAGL() {
     try {
       const altitudeMSL = geofs?.animation?.values?.altitude;
@@ -238,9 +238,10 @@
     return null;
   }
 
-  // --- 起飛偵測 ---
+  // --- Takeoff Detection ---
   function checkTakeoff() {
     const onGround = geofs?.aircraft?.instance?.groundContact ?? true;
+    
     
     // If we are already flying and haven't set a time, set it now (approximate)
     if (!onGround && !takeoffTimeUTC) {
@@ -254,7 +255,7 @@
     wasOnGround = onGround;
   }
 
-  // --- 擷取飛行狀態 ---
+  // --- Flight Status Snapshot ---
   function readSnapshot() {
     try {
       const inst = geofs?.aircraft?.instance;
@@ -289,7 +290,7 @@
     }
   }
 
-  // --- 組裝 payload ---
+  // --- Build Payload ---
 function buildPayload(snap) {
   checkTakeoff();
   // Debug Log
@@ -331,7 +332,7 @@ function buildPayload(snap) {
   };
 }
 
-  // --- 定期傳送 ---
+  // --- Periodic Send ---
   setInterval(() => {
     if (!ws || ws.readyState !== 1) return;
     if (!isTransponderActive) return; // Only send if transponder is active
@@ -341,7 +342,7 @@ function buildPayload(snap) {
     safeSend({ type: 'position_update', payload });
   }, SEND_INTERVAL_MS);
 
-  // --- Toast 提示 ---
+  // --- Toast Notification ---
   function showToast(msg) {
     const toast = document.createElement('div');
     toast.textContent = msg;
@@ -389,7 +390,7 @@ function buildPayload(snap) {
       }
   }, 5000);
 
-  // --- UI 注入 ---
+  // --- UI Injection ---
   function injectFlightUI() {
     flightUI = document.createElement('div');
     flightUI.id = 'flightInfoUI';
@@ -640,7 +641,7 @@ function buildPayload(snap) {
         showToast('Press W to show Flight Info');
     };
 
-    // 讓輸入框自動轉大寫
+    // Auto-uppercase input fields
     ['depInput','arrInput','fltInput','sqkInput', 'regInput'].forEach(id => {
       const el = document.getElementById(id);
       el.addEventListener('input', () => {
@@ -676,7 +677,7 @@ function buildPayload(snap) {
   }
   injectFlightUI();
 
-  // --- 快捷鍵 W 收合 UI ---
+  // --- Hotkey W to Toggle UI ---
   document.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'w') {
       if (flightUI.style.display === 'none') {
@@ -689,12 +690,12 @@ function buildPayload(snap) {
     }
   });
 
-  // --- 關閉所有 input 的 autocomplete ---
+  // --- Disable Autocomplete for Inputs ---
   document.querySelectorAll("input").forEach(el => {
     el.setAttribute("autocomplete", "off");
   });
 
-  // --- 防止 input 觸發 GeoFS hotkey ---
+  // --- Prevent Input from Triggering GeoFS Hotkeys ---
   document.addEventListener("keydown", (e) => {
     const target = e.target;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
