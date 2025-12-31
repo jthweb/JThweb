@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -144,8 +144,49 @@
   let flightUI;
   let wasOnGround = true;
   let takeoffTimeUTC = '';
+  let actualDeparture = null;
+  let actualArrival = null;
+
+  // --- Airport Manager ---
+  const AirportManager = {
+    airports: [],
+    loaded: false,
+    
+    async load() {
+      try {
+        const res = await fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json');
+        const data = await res.json();
+        this.airports = Object.values(data);
+        this.loaded = true;
+        console.log('[ATC-Reporter] Airports loaded:', this.airports.length);
+      } catch (e) {
+        console.warn('[ATC-Reporter] Failed to load airports:', e);
+      }
+    },
+
+    getNearest(lat, lon) {
+      if (!this.loaded) return null;
+      let minDst = Infinity;
+      let nearest = null;
+      
+      for (const apt of this.airports) {
+        const d = Math.sqrt(Math.pow(apt.lat - lat, 2) + Math.pow(apt.lon - lon, 2));
+        if (d < minDst) {
+          minDst = d;
+          nearest = apt;
+        }
+      }
+      
+      // Threshold (e.g. 0.1 degrees ~ 10km)
+      if (minDst < 0.1) return nearest;
+      return null;
+    }
+  };
+  
+  AirportManager.load();
+
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.0.0';
+  const CURRENT_VERSION = '2.1.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -241,9 +282,8 @@
   }
 
   // --- Takeoff Detection ---
-  function checkTakeoff() {
+  function checkTakeoff(snap) {
     const onGround = geofs?.aircraft?.instance?.groundContact ?? true;
-    
     
     // If we are already flying and haven't set a time, set it now (approximate)
     if (!onGround && !takeoffTimeUTC) {
@@ -253,7 +293,27 @@
     if (wasOnGround && !onGround) {
       takeoffTimeUTC = new Date().toISOString();
       console.log('[ATC-Reporter] Takeoff at', takeoffTimeUTC);
+      
+      if (snap) {
+          const apt = AirportManager.getNearest(snap.lat, snap.lon);
+          if (apt) {
+              actualDeparture = apt.icao || apt.iata || apt.name;
+              showToast(`Departed from ${apt.name}`);
+          }
+      }
+      actualArrival = null;
     }
+
+    if (!wasOnGround && onGround) {
+        if (snap) {
+            const apt = AirportManager.getNearest(snap.lat, snap.lon);
+            if (apt) {
+                actualArrival = apt.icao || apt.iata || apt.name;
+                showToast(`Landed at ${apt.name}`);
+            }
+        }
+    }
+
     wasOnGround = onGround;
   }
 
@@ -301,7 +361,7 @@
 
       if (!vsFpm && typeof altMSL === 'number') {
         const dtMs = now - (prevAltTs || now);
-        if (dtMs > 0 && prevAltMSL !== null) {
+        if (dtMsnaps > 0 && prevAltMSL !== null) {
           vsFpm = Math.round((altMSL - prevAltMSL) / (dtMs / 60000));
         }
         prevAltMSL = altMSL;
@@ -354,6 +414,8 @@ function buildPayload(snap) {
     registration: flightInfo.registration,
     departure: flightInfo.departure,
     arrival: flightInfo.arrival,
+    actualDeparture: actualDeparture,
+    actualArrival: actualArrival,
     takeoffTime: takeoffTimeUTC,
     squawk: flightInfo.squawk,
     flightPlan: flightPlan,
