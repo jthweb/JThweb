@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      3.0.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -185,8 +185,200 @@
   
   AirportManager.load();
 
+  // --- Flight Logger Integration ---
+  const FlightLogger = {
+    webhooks: {},
+    userInfo: null,
+    flightStarted: false,
+    flightStartTime: null,
+    departureICAO: "UNKNOWN",
+    arrivalICAO: "UNKNOWN",
+    firstGroundContact: false,
+    oldAGL: 0,
+    newAGL: 0,
+    calculatedVerticalSpeed: 0,
+    oldTime: Date.now(),
+    bounces: 0,
+    isGrounded: true,
+    justLanded: false,
+    teleportWarnings: 0,
+    lastPosition: null,
+    lastPositionTime: null,
+    
+    async init() {
+        try {
+            const httpUrl = WS_URL.replace('ws', 'http'); 
+            const res = await fetch(`${httpUrl}/api/webhooks`);
+            this.webhooks = await res.json();
+            console.log('[FlightLogger] Webhooks loaded:', Object.keys(this.webhooks).length);
+        } catch (e) {
+            console.warn('[FlightLogger] Failed to load webhooks:', e);
+        }
+
+        try {
+            const httpUrl = WS_URL.replace('ws', 'http');
+            const res = await fetch(`${httpUrl}/api/me`, { credentials: 'include' });
+            if (res.ok) {
+                this.userInfo = await res.json();
+                console.log('[FlightLogger] User authenticated:', this.userInfo.username);
+            }
+        } catch (e) {
+            console.warn('[FlightLogger] Failed to fetch user info:', e);
+        }
+
+        setInterval(() => this.monitor(), 1000);
+        setInterval(() => this.updateCalVertS(), 25);
+    },
+
+    updateCalVertS() {
+        if ((typeof geofs !== 'undefined' && typeof geofs.animation !== 'undefined' && typeof geofs.animation.values != 'undefined' && !geofs.isPaused()) &&
+            ((geofs.animation.values.altitude !== undefined && geofs.animation.values.groundElevationFeet !== undefined) ? ((geofs.animation.values.altitude - geofs.animation.values.groundElevationFeet) + (geofs.aircraft.instance.collisionPoints[geofs.aircraft.instance.collisionPoints.length - 2].worldPosition[2]*3.2808399)) : 'N/A') !== this.oldAGL) {
+            
+            this.newAGL = (geofs.animation.values.altitude !== undefined && geofs.animation.values.groundElevationFeet !== undefined) ? ((geofs.animation.values.altitude - geofs.animation.values.groundElevationFeet) + (geofs.aircraft.instance.collisionPoints[geofs.aircraft.instance.collisionPoints.length - 2].worldPosition[2]*3.2808399)) : 'N/A';
+            const newTime = Date.now();
+            this.calculatedVerticalSpeed = (this.newAGL - this.oldAGL) * (60000/(newTime - this.oldTime));
+            this.oldAGL = this.newAGL;
+            this.oldTime = newTime;
+        }
+    },
+
+    monitor() {
+        if (typeof geofs === 'undefined' || !geofs.animation || !geofs.animation.values || !geofs.aircraft || !geofs.aircraft.instance) return;
+        
+        const values = geofs.animation.values;
+        const onGround = values.groundContact;
+        const altitudeFt = values.altitude * 3.28084;
+        const [lat, lon] = geofs.aircraft.instance.llaLocation || [values.latitude, values.longitude];
+        const now = Date.now();
+
+        if (this.flightStarted && this.lastPosition) {
+             const dist = this.calculateDistance(this.lastPosition.lat, this.lastPosition.lon, lat, lon);
+             const timeDiff = (now - this.lastPositionTime) / 1000;
+             if (timeDiff > 1 && dist > (timeDiff * 0.6) && Math.abs(altitudeFt - this.lastPosition.altitude) > (timeDiff * 200)) {
+                 this.teleportWarnings++;
+                 console.warn('[FlightLogger] Teleport detected!');
+             }
+        }
+        this.lastPosition = { lat, lon, altitude: altitudeFt };
+        this.lastPositionTime = now;
+
+        const enhancedAGL = (values.altitude !== undefined && values.groundElevationFeet !== undefined) ?
+          ((values.altitude - values.groundElevationFeet) +
+           (geofs.aircraft.instance.collisionPoints[geofs.aircraft.instance.collisionPoints.length - 2].worldPosition[2] * 3.2808399))
+          : 0;
+
+        if (enhancedAGL < 500) {
+          if (onGround && !this.isGrounded) {
+              this.justLanded = true;
+          }
+          this.isGrounded = onGround;
+        }
+
+        if (!this.flightStarted && !onGround && enhancedAGL > 100) {
+            this.flightStarted = true;
+            this.flightStartTime = now;
+            const apt = AirportManager.getNearest(lat, lon);
+            this.departureICAO = apt ? (apt.icao || apt.iata || "UNKNOWN") : "UNKNOWN";
+            this.teleportWarnings = 0;
+            this.bounces = 0;
+            this.firstGroundContact = false;
+            console.log(`[FlightLogger] Flight started from ${this.departureICAO}`);
+            if (typeof showToast === 'function') showToast(`Flight Started from ${this.departureICAO}`);
+        }
+
+        const elapsed = (now - this.flightStartTime) / 1000;
+        if (this.flightStarted && !this.firstGroundContact && onGround) {
+            if (elapsed < 60) return;
+
+            if (this.justLanded) this.bounces++;
+
+            const vs = this.calculatedVerticalSpeed !== 0 && Math.abs(this.calculatedVerticalSpeed) < 5000
+                ? this.calculatedVerticalSpeed
+                : values.verticalSpeed || 0;
+
+            let quality = "CRASH";
+            if (vs >= -50) quality = "SUPER BUTTER";
+            else if (vs >= -200) quality = "BUTTER";
+            else if (vs >= -500) quality = "ACCEPTABLE";
+            else if (vs >= -1000) quality = "HARD";
+
+            const apt = AirportManager.getNearest(lat, lon);
+            this.arrivalICAO = apt ? (apt.icao || apt.iata || "UNKNOWN") : "UNKNOWN";
+
+            if (vs <= -1000 || vs > 200) {
+                quality = "CRASH";
+                if (typeof showToast === 'function') showToast("💥 CRASH DETECTED");
+            } else {
+                if (typeof showToast === 'function') showToast(`🛬 Landed at ${this.arrivalICAO} (${quality})`);
+            }
+
+            this.firstGroundContact = true;
+            this.sendLog(vs, quality);
+            this.flightStarted = false;
+        }
+    },
+
+    calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+    },
+
+    sendLog(vs, quality) {
+        const callsign = getPlayerCallsign();
+        const airlineMatch = callsign.match(/^([A-Z]{3})/i);
+        const airlineCode = airlineMatch ? airlineMatch[1].toUpperCase() : "GFS";
+        
+        const webhookUrl = this.webhooks[airlineCode] || this.webhooks["GFS"];
+
+        if (!webhookUrl) {
+            console.warn('[FlightLogger] No webhook found for airline:', airlineCode);
+            return;
+        }
+
+        const aircraft = getAircraftName();
+        const durationMin = Math.round((Date.now() - this.flightStartTime) / 60000);
+        const formattedDuration = `${Math.floor(durationMin / 60).toString().padStart(2, '0')}:${(durationMin % 60).toString().padStart(2, '0')}`;
+        
+        const pilotName = this.userInfo ? `<@${this.userInfo.discordId}>` : (callsign || "Unknown");
+
+        let embedColor = 0x0099FF;
+        if (quality === "CRASH") embedColor = 0xDC143C;
+        else if (quality === "HARD") embedColor = 0xFF8000;
+        else if (quality === "SUPER BUTTER") embedColor = 0x00FF00;
+
+        const message = {
+            embeds: [{
+                title: "🛫 Flight Report - GeoFS",
+                color: embedColor,
+                fields: [
+                    { name: "✈️ Flight Information", value: `**Flight no.**: ${callsign}\n**Pilot**: ${pilotName}\n**Aircraft**: ${aircraft}`, inline: false },
+                    { name: "📍 Route", value: `**Departure**: ${this.departureICAO}\n**Arrival**: ${this.arrivalICAO}`, inline: true },
+                    { name: "⏱️ Duration", value: `**Time**: ${formattedDuration}`, inline: true },
+                    { name: "📊 Landing", value: `**V/S**: ${vs.toFixed(1)} fpm\n**Quality**: ${quality}\n**Bounces**: ${this.bounces}`, inline: true }
+                ],
+                timestamp: new Date().toISOString(),
+                footer: { text: "GeoFS Flight Logger" + (this.teleportWarnings > 0 ? " | ⚠️ Teleport Detected" : "") }
+            }]
+        };
+
+        fetch(webhookUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(message)
+        }).then(() => console.log('[FlightLogger] Log sent'))
+          .catch(e => console.error('[FlightLogger] Failed to send log:', e));
+    }
+  };
+  setTimeout(() => FlightLogger.init(), 5000);
+
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.1.0';
+  const CURRENT_VERSION = '3.0.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
