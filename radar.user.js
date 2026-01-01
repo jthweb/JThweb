@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      2.1.3
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -188,6 +188,7 @@
   // --- Flight Logger Integration ---
   const FlightLogger = {
     webhooks: {},
+    airlineCodes: {},
     userInfo: null,
     flightStarted: false,
     flightStartTime: null,
@@ -207,7 +208,7 @@
     
     async init() {
         try {
-            const httpUrl = WS_URL.replace('ws', 'http'); 
+            const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
             const res = await fetch(`${httpUrl}/api/webhooks`);
             this.webhooks = await res.json();
             console.log('[FlightLogger] Webhooks loaded:', Object.keys(this.webhooks).length);
@@ -216,7 +217,16 @@
         }
 
         try {
-            const httpUrl = WS_URL.replace('ws', 'http');
+            const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+            const res = await fetch(`${httpUrl}/api/airline_codes`);
+            this.airlineCodes = await res.json();
+            console.log('[FlightLogger] Airline codes loaded:', Object.keys(this.airlineCodes).length);
+        } catch (e) {
+            console.warn('[FlightLogger] Failed to load airline codes:', e);
+        }
+
+        try {
+            const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
             const res = await fetch(`${httpUrl}/api/me`, { credentials: 'include' });
             if (res.ok) {
                 this.userInfo = await res.json();
@@ -287,34 +297,43 @@
         }
 
         const elapsed = (now - this.flightStartTime) / 1000;
-        if (this.flightStarted && !this.firstGroundContact && onGround) {
-            if (elapsed < 60) return;
+        
+        // Landing Detection
+        if (this.flightStarted && onGround && enhancedAGL <= 50) {
+             // Check if we have been flying for at least 30 seconds to avoid taxi false positives
+             if (elapsed < 30) {
+                 // Likely just taxiing or bouncing on takeoff
+                 return;
+             }
 
-            if (this.justLanded) this.bounces++;
+             if (!this.firstGroundContact) {
+                 this.firstGroundContact = true;
+                 
+                 // Calculate landing stats
+                 const vs = this.calculatedVerticalSpeed !== 0 && Math.abs(this.calculatedVerticalSpeed) < 5000
+                    ? this.calculatedVerticalSpeed
+                    : values.verticalSpeed || 0;
 
-            const vs = this.calculatedVerticalSpeed !== 0 && Math.abs(this.calculatedVerticalSpeed) < 5000
-                ? this.calculatedVerticalSpeed
-                : values.verticalSpeed || 0;
+                let quality = "CRASH";
+                if (vs >= -50) quality = "SUPER BUTTER";
+                else if (vs >= -200) quality = "BUTTER";
+                else if (vs >= -500) quality = "ACCEPTABLE";
+                else if (vs >= -1000) quality = "HARD";
 
-            let quality = "CRASH";
-            if (vs >= -50) quality = "SUPER BUTTER";
-            else if (vs >= -200) quality = "BUTTER";
-            else if (vs >= -500) quality = "ACCEPTABLE";
-            else if (vs >= -1000) quality = "HARD";
+                const apt = AirportManager.getNearest(lat, lon);
+                this.arrivalICAO = apt ? (apt.icao || apt.iata || "UNKNOWN") : "UNKNOWN";
 
-            const apt = AirportManager.getNearest(lat, lon);
-            this.arrivalICAO = apt ? (apt.icao || apt.iata || "UNKNOWN") : "UNKNOWN";
+                if (vs <= -1000 || vs > 200) {
+                    quality = "CRASH";
+                    if (typeof showToast === 'function') showToast("💥 CRASH DETECTED");
+                } else {
+                    if (typeof showToast === 'function') showToast(`🛬 Landed at ${this.arrivalICAO} (${quality})`);
+                }
 
-            if (vs <= -1000 || vs > 200) {
-                quality = "CRASH";
-                if (typeof showToast === 'function') showToast("💥 CRASH DETECTED");
-            } else {
-                if (typeof showToast === 'function') showToast(`🛬 Landed at ${this.arrivalICAO} (${quality})`);
-            }
-
-            this.firstGroundContact = true;
-            this.sendLog(vs, quality);
-            this.flightStarted = false;
+                this.sendLog(vs, quality);
+                this.flightStarted = false;
+                this.justLanded = true;
+             }
         }
     },
 
@@ -331,13 +350,39 @@
 
     sendLog(vs, quality) {
         const callsign = getPlayerCallsign();
-        const airlineMatch = callsign.match(/^([A-Z]{3})/i);
-        const airlineCode = airlineMatch ? airlineMatch[1].toUpperCase() : "GFS";
         
-        const webhookUrl = this.webhooks[airlineCode] || this.webhooks["GFS"];
+        let webhookUrl = null;
+        let airlineCode = "GFS";
+
+        // 1. Try 3-letter ICAO code
+        const match3 = callsign.match(/^([A-Z]{3})/i);
+        if (match3) {
+            const code = match3[1].toUpperCase();
+            if (this.webhooks[code]) {
+                airlineCode = code;
+                webhookUrl = this.webhooks[code];
+            }
+        }
+
+        // 2. Try 2-letter IATA code if no ICAO match found
+        if (!webhookUrl) {
+            const match2 = callsign.match(/^([A-Z]{2})/i);
+            if (match2) {
+                const code = match2[1].toUpperCase();
+                if (this.webhooks[code]) {
+                    airlineCode = code;
+                    webhookUrl = this.webhooks[code];
+                }
+            }
+        }
+
+        // 3. Fallback to GFS
+        if (!webhookUrl) {
+             webhookUrl = this.webhooks["GFS"];
+        }
 
         if (!webhookUrl) {
-            console.warn('[FlightLogger] No webhook found for airline:', airlineCode);
+            console.warn('[FlightLogger] No webhook found for callsign:', callsign);
             return;
         }
 
@@ -352,10 +397,16 @@
         else if (quality === "HARD") embedColor = 0xFF8000;
         else if (quality === "SUPER BUTTER") embedColor = 0x00FF00;
 
+        // Use Server Logo Proxy
+        // The server handles: Local File -> IATA Lookup -> CDN Redirect
+        const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+        const logoUrl = `${httpUrl}/logos/${airlineCode}.png`;
+
         const message = {
             embeds: [{
                 title: "🛫 Flight Report - GeoFS",
                 color: embedColor,
+                thumbnail: { url: logoUrl },
                 fields: [
                     { name: "✈️ Flight Information", value: `**Flight no.**: ${callsign}\n**Pilot**: ${pilotName}\n**Aircraft**: ${aircraft}`, inline: false },
                     { name: "📍 Route", value: `**Departure**: ${this.departureICAO}\n**Arrival**: ${this.arrivalICAO}`, inline: true },
@@ -378,7 +429,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '3.0.0';
+  const CURRENT_VERSION = '2.1.3';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
