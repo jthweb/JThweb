@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.5.1
+// @version      2.5.3
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -442,7 +442,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.5.1';
+  const CURRENT_VERSION = '2.5.3';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -641,7 +641,17 @@
         prevAltTs = now;
       }
 
-      return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)), verticalSpeedFpm: vsFpm };
+      // Wind Data
+      let windSpeed = 0;
+      let windDir = 0;
+      if (geofs?.animation?.values?.windSpeed) {
+          windSpeed = geofs.animation.values.windSpeed * 1.94384; // m/s to knots
+      }
+      if (geofs?.animation?.values?.windDir) {
+          windDir = geofs.animation.values.windDir;
+      }
+
+      return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)), verticalSpeedFpm: vsFpm, windSpeed, windDir };
     } catch (e) {
       console.warn('[ATC-Reporter] readSnapshot error:', e);
       return null;
@@ -680,6 +690,8 @@ function buildPayload(snap) {
     verticalSpeed: snap.verticalSpeedFpm || 0,
     verticalSpeedFpm: snap.verticalSpeedFpm || 0,
     vs: snap.verticalSpeedFpm || 0,
+    windSpeed: Math.round(snap.windSpeed || 0),
+    windDir: Math.round(snap.windDir || 0),
     flightNo: flightInfo.flightNo,
     registration: flightInfo.registration,
     departure: flightInfo.departure,
@@ -697,6 +709,8 @@ function buildPayload(snap) {
 }
 
   // --- Periodic Send ---
+  let lastFlightPlanHash = "";
+  
   setInterval(() => {
     try {
       if (!ws || ws.readyState !== 1) return;
@@ -711,7 +725,17 @@ function buildPayload(snap) {
 
       const snap = readSnapshot();
       if (!snap) return;
+      
       const payload = buildPayload(snap);
+      
+      // Optimize: Only send flight plan if it changed
+      const currentPlanHash = JSON.stringify(payload.flightPlan);
+      if (currentPlanHash === lastFlightPlanHash) {
+          delete payload.flightPlan;
+      } else {
+          lastFlightPlanHash = currentPlanHash;
+      }
+      
       safeSend({ type: 'position_update', payload });
     } catch (e) {
       console.warn('[ATC-Reporter] Periodic send error:', e);
