@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.2.5
+// @version      2.3.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -128,7 +128,7 @@
 
   // --- Global Variables ---
   let flightInfo = { departure: '', arrival: '', flightNo: '', squawk: '', registration: '' };
-  let isTransponderActive = false;
+  let isTransponderActive = localStorage.getItem('geofs_radar_transponder_active') === 'true';
   let prevAltMSL = null;
   let prevAltTs = null;
   
@@ -241,14 +241,27 @@
     },
 
     updateCalVertS() {
-        if ((typeof geofs !== 'undefined' && typeof geofs.animation !== 'undefined' && typeof geofs.animation.values != 'undefined' && !geofs.isPaused()) &&
-            ((geofs.animation.values.altitude !== undefined && geofs.animation.values.groundElevationFeet !== undefined) ? ((geofs.animation.values.altitude - geofs.animation.values.groundElevationFeet) + (geofs.aircraft.instance.collisionPoints[geofs.aircraft.instance.collisionPoints.length - 2].worldPosition[2]*3.2808399)) : 'N/A') !== this.oldAGL) {
-            
-            this.newAGL = (geofs.animation.values.altitude !== undefined && geofs.animation.values.groundElevationFeet !== undefined) ? ((geofs.animation.values.altitude - geofs.animation.values.groundElevationFeet) + (geofs.aircraft.instance.collisionPoints[geofs.aircraft.instance.collisionPoints.length - 2].worldPosition[2]*3.2808399)) : 'N/A';
+        if (typeof geofs === 'undefined' || !geofs.animation || !geofs.animation.values || geofs.isPaused()) return;
+        
+        const values = geofs.animation.values;
+        const inst = geofs.aircraft?.instance;
+        if (!inst || !inst.collisionPoints || inst.collisionPoints.length < 2) return;
+
+        const alt = values.altitude;
+        const ground = values.groundElevationFeet;
+        if (alt === undefined || ground === undefined) return;
+
+        const collisionZ = inst.collisionPoints[inst.collisionPoints.length - 2].worldPosition[2] * 3.2808399;
+        const currentAGL = (alt - ground) + collisionZ;
+
+        if (currentAGL !== this.oldAGL) {
             const newTime = Date.now();
-            this.calculatedVerticalSpeed = (this.newAGL - this.oldAGL) * (60000/(newTime - this.oldTime));
-            this.oldAGL = this.newAGL;
-            this.oldTime = newTime;
+            const timeDiff = newTime - this.oldTime;
+            if (timeDiff > 0) {
+                this.calculatedVerticalSpeed = (currentAGL - this.oldAGL) * (60000 / timeDiff);
+                this.oldAGL = currentAGL;
+                this.oldTime = newTime;
+            }
         }
     },
 
@@ -429,7 +442,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.2.5';
+  const CURRENT_VERSION = '2.3.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -448,7 +461,24 @@
 })();
   // --- WebSocket Management ---
   let ws;
+  function updateStatusDot() {
+    const statusDot = document.querySelector('.geofs-radar-status');
+    if (!statusDot) return;
+
+    if (!ws || ws.readyState !== 1) {
+      statusDot.style.background = '#ef4444'; // Disconnected (Red)
+      statusDot.style.boxShadow = 'none';
+    } else if (!isTransponderActive) {
+      statusDot.style.background = '#3b82f6'; // Connected, Inactive (Blue)
+      statusDot.style.boxShadow = '0 0 8px rgba(59, 130, 246, 0.5)';
+    } else {
+      statusDot.style.background = '#22c55e'; // Active (Green)
+      statusDot.style.boxShadow = '0 0 10px #22c55e';
+    }
+  }
+
   function connect() {
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     const statusDot = document.querySelector('.geofs-radar-status');
     if (statusDot) statusDot.style.background = '#eab308'; // Connecting (Yellow)
 
@@ -456,16 +486,13 @@
       ws = new WebSocket(WS_URL);
       ws.addEventListener('open', () => {
         log('WS connected to ' + WS_URL);
-        // Status dot will be updated when transponder is active
+        updateStatusDot();
         safeSend({ type: 'hello', role: 'player' });
         showToast('Connected to Radar Server');
       });
       ws.addEventListener('close', () => {
         log('WS closed, retrying...');
-        if (statusDot) {
-            statusDot.style.background = '#ef4444'; // Disconnected (Red)
-            statusDot.style.boxShadow = 'none';
-        }
+        updateStatusDot();
         setTimeout(connect, 2000);
       });
       ws.addEventListener('error', (e) => {
@@ -604,7 +631,7 @@
 
       if (!vsFpm && typeof altMSL === 'number') {
         const dtMs = now - (prevAltTs || now);
-        if (dtMsnaps > 0 && prevAltMSL !== null) {
+        if (dtMs > 0 && prevAltMSL !== null) {
           vsFpm = Math.round((altMSL - prevAltMSL) / (dtMs / 60000));
         }
         prevAltMSL = altMSL;
@@ -670,12 +697,24 @@ function buildPayload(snap) {
 
   // --- Periodic Send ---
   setInterval(() => {
-    if (!ws || ws.readyState !== 1) return;
-    if (!isTransponderActive) return; // Only send if transponder is active
-    const snap = readSnapshot();
-    if (!snap) return;
-    const payload = buildPayload(snap);
-    safeSend({ type: 'position_update', payload });
+    try {
+      if (!ws || ws.readyState !== 1) return;
+      
+      if (!isTransponderActive) {
+        // Send heartbeat every 10 seconds to keep connection alive
+        if (Date.now() % 10000 < SEND_INTERVAL_MS) {
+          safeSend({ type: 'heartbeat' });
+        }
+        return;
+      }
+
+      const snap = readSnapshot();
+      if (!snap) return;
+      const payload = buildPayload(snap);
+      safeSend({ type: 'position_update', payload });
+    } catch (e) {
+      console.warn('[ATC-Reporter] Periodic send error:', e);
+    }
   }, SEND_INTERVAL_MS);
 
   // --- Toast Notification ---
@@ -874,6 +913,7 @@ function buildPayload(snap) {
     `;
 
     document.body.appendChild(flightUI);
+    updateStatusDot();
 
     // Drag Logic
     const header = document.getElementById('radarHeader');
@@ -983,11 +1023,8 @@ function buildPayload(snap) {
       localStorage.setItem('geofs_radar_flightinfo', JSON.stringify(flightInfo));
       
       isTransponderActive = true;
-      const statusDot = document.querySelector('.geofs-radar-status');
-      if (statusDot) {
-          statusDot.style.background = '#22c55e';
-          statusDot.style.boxShadow = '0 0 10px #22c55e';
-      }
+      localStorage.setItem('geofs_radar_transponder_active', 'true');
+      updateStatusDot();
       
       showToast('Transponder Updated & Active');
     };
