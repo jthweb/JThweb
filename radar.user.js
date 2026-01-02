@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.5.1
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -442,7 +442,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.3.0';
+  const CURRENT_VERSION = '2.5.1';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -691,6 +691,7 @@ function buildPayload(snap) {
     flightPlan: flightPlan,
     nextWaypoint: geofs.flightPlan?.trackedWaypoint?.ident || null,
     userId: userId,
+    playerId: userId, // Ensure stable ID generation on server
     apiKey: localStorage.getItem('geofs_flightradar_apikey') || null
   };
 }
