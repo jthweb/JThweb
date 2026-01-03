@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.5.3
+// @version      2.6.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -150,6 +150,7 @@
   // --- Airport Manager ---
   const AirportManager = {
     airports: [],
+    airportByCode: new Map(),
     loaded: false,
     
     async load() {
@@ -157,6 +158,14 @@
         const res = await fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json');
         const data = await res.json();
         this.airports = Object.values(data);
+        this.airportByCode = new Map();
+        for (const apt of this.airports) {
+          const icao = (apt?.icao || '').toString().trim().toUpperCase();
+          const iata = (apt?.iata || '').toString().trim().toUpperCase();
+          if (icao) this.airportByCode.set(icao, apt);
+          // Prefer ICAO when both exist; only set IATA if unused
+          if (iata && !this.airportByCode.has(iata)) this.airportByCode.set(iata, apt);
+        }
         this.loaded = true;
         console.log('[ATC-Reporter] Airports loaded:', this.airports.length);
       } catch (e) {
@@ -442,7 +451,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.5.3';
+  const CURRENT_VERSION = '2.6.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -465,7 +474,10 @@
     const statusDot = document.querySelector('.geofs-radar-status');
     if (!statusDot) return;
 
-    if (!ws || ws.readyState !== 1) {
+    if (ws && ws.readyState === 0) {
+      statusDot.style.background = '#eab308'; // Connecting (Yellow)
+      statusDot.style.boxShadow = '0 0 8px rgba(234, 179, 8, 0.5)';
+    } else if (!ws || ws.readyState !== 1) {
       statusDot.style.background = '#ef4444'; // Disconnected (Red)
       statusDot.style.boxShadow = 'none';
     } else if (!isTransponderActive) {
@@ -475,6 +487,29 @@
       statusDot.style.background = '#22c55e'; // Active (Green)
       statusDot.style.boxShadow = '0 0 10px #22c55e';
     }
+  }
+
+  function findAirportByCode(code) {
+    const normalized = (code || '').toString().trim().toUpperCase();
+    if (!normalized || !AirportManager.loaded) return null;
+    return AirportManager.airportByCode.get(normalized) || null;
+  }
+
+  function formatAirportFullName(airport) {
+    if (!airport) return '';
+    return (airport.name || '').toString();
+  }
+
+  function refreshAirportTooltips() {
+    const depEl = document.getElementById('depInput');
+    const arrEl = document.getElementById('arrInput');
+    if (!depEl || !arrEl) return;
+
+    const depAirport = findAirportByCode(depEl.value);
+    const arrAirport = findAirportByCode(arrEl.value);
+
+    depEl.title = formatAirportFullName(depAirport);
+    arrEl.title = formatAirportFullName(arrAirport);
   }
 
   function connect() {
@@ -505,6 +540,10 @@
     }
   }
   connect();
+
+  // Some browsers/userscript engines miss a single event-driven update;
+  // keep the status dot accurate across reconnects/UI timing.
+  setInterval(updateStatusDot, 1000);
 
   function safeSend(obj) {
     try {
@@ -939,6 +978,7 @@ function buildPayload(snap) {
 
     document.body.appendChild(flightUI);
     updateStatusDot();
+    refreshAirportTooltips();
 
     // Drag Logic
     const header = document.getElementById('radarHeader');
@@ -1031,6 +1071,14 @@ function buildPayload(snap) {
       });
     });
 
+    // Airport full-name tooltips on hover
+    ['depInput', 'arrInput'].forEach((id) => {
+      const el = document.getElementById(id);
+      el.addEventListener('input', refreshAirportTooltips);
+      el.addEventListener('blur', refreshAirportTooltips);
+      el.addEventListener('mouseenter', refreshAirportTooltips);
+    });
+
     document.getElementById('saveBtn').onclick = () => {
       flightInfo.departure = document.getElementById('depInput').value.trim();
       flightInfo.arrival = document.getElementById('arrInput').value.trim();
@@ -1050,6 +1098,7 @@ function buildPayload(snap) {
       isTransponderActive = true;
       localStorage.setItem('geofs_radar_transponder_active', 'true');
       updateStatusDot();
+      refreshAirportTooltips();
       
       showToast('Transponder Updated & Active');
     };
