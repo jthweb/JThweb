@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.6.7
+// @version      2.6.8
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -451,7 +451,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.6.7';
+  const CURRENT_VERSION = '2.6.8';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -972,7 +972,7 @@ function buildPayload(snap) {
             </div>
             </div>
             <button id="saveBtn" class="geofs-radar-btn">Update Transponder</button>
-            <button id="stopBtn" class="geofs-radar-btn" style="display:none;background:rgba(239, 68, 68, 0.2);border-color:rgba(239, 68, 68, 0.3);color:#f87171;margin-top:8px;">Stop Transponder</button>
+            <button id="stopBtn" class="geofs-radar-btn" style="display:none;background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;margin-top:10px;font-weight:800;box-shadow:0 4px 12px rgba(239, 68, 68, 0.3);">🛑 STOP TRANSPONDER</button>
         </div>
       </div>
     `;
@@ -1135,7 +1135,7 @@ function buildPayload(snap) {
         stopBtn.style.display = 'none';
       }
     } catch(e) {}
-  }, 2000);
+  }, 3000); // Reduced frequency to improve performance
 
   // --- Hotkey W to Toggle UI ---
   document.addEventListener('keydown', (e) => {
