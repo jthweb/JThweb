@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.6.8
+// @version      3.0.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -17,7 +17,7 @@
   // If running server locally, use 'ws://localhost:6969/ws' (You may need to allow mixed content)
   // If using public server, use 'wss://radar.yugp.me/ws'
   const WS_URL = 'wss://radar.yugp.me/ws'; 
-  const SEND_INTERVAL_MS = 500;
+  const SEND_INTERVAL_MS = 1500;
   /*************/
 
     // ===== Modal Function =====
@@ -322,6 +322,14 @@
         
         // Landing Detection
         if (this.flightStarted && onGround && enhancedAGL <= 50) {
+             // Check for Teleportation (prevent false landing log)
+             if (this.teleportWarnings > 0) {
+                 console.log('[FlightLogger] Teleport detected on arrival - resetting flight without logging.');
+                 this.flightStarted = false;
+                 this.teleportWarnings = 0;
+                 return;
+             }
+
              // Check if we have been flying for at least 30 seconds to avoid taxi false positives
              if (elapsed < 30) {
                  // Likely just taxiing or bouncing on takeoff
@@ -451,7 +459,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.6.8';
+  const CURRENT_VERSION = '3.0.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -972,7 +980,7 @@ function buildPayload(snap) {
             </div>
             </div>
             <button id="saveBtn" class="geofs-radar-btn">Update Transponder</button>
-            <button id="stopBtn" class="geofs-radar-btn" style="display:none;background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;margin-top:10px;font-weight:800;box-shadow:0 4px 12px rgba(239, 68, 68, 0.3);">🛑 STOP TRANSPONDER</button>
+            <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;margin-top:10px;font-weight:800;box-shadow:0 4px 12px rgba(239, 68, 68, 0.3);">🛑 STOP TRANSPONDER</button>
         </div>
       </div>
     `;
@@ -1118,24 +1126,7 @@ function buildPayload(snap) {
   }
   injectFlightUI();
   
-  // Monitor landing status to show stop button when parked
-  setInterval(() => {
-    try {
-      if (!geofs?.aircraft?.instance || !isTransponderActive) return;
-      
-      const values = geofs.animation.values;
-      const onGround = values.groundContact;
-      const speed = values.kias || 0;
-      const stopBtn = document.getElementById('stopBtn');
-      
-      // Show stop button when parked (on ground and speed < 5 knots)
-      if (onGround && speed < 5 && stopBtn) {
-        stopBtn.style.display = 'block';
-      } else if (stopBtn && stopBtn.style.display !== 'none') {
-        stopBtn.style.display = 'none';
-      }
-    } catch(e) {}
-  }, 3000); // Reduced frequency to improve performance
+
 
   // --- Hotkey W to Toggle UI ---
   document.addEventListener('keydown', (e) => {
