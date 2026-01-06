@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      2.6.0
+// @version      2.6.7
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -451,7 +451,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '2.6.0';
+  const CURRENT_VERSION = '2.6.7';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -972,6 +972,7 @@ function buildPayload(snap) {
             </div>
             </div>
             <button id="saveBtn" class="geofs-radar-btn">Update Transponder</button>
+            <button id="stopBtn" class="geofs-radar-btn" style="display:none;background:rgba(239, 68, 68, 0.2);border-color:rgba(239, 68, 68, 0.3);color:#f87171;margin-top:8px;">Stop Transponder</button>
         </div>
       </div>
     `;
@@ -1100,10 +1101,41 @@ function buildPayload(snap) {
       updateStatusDot();
       refreshAirportTooltips();
       
+      // Hide stop button when activating
+      document.getElementById('stopBtn').style.display = 'none';
+      
       showToast('Transponder Updated & Active');
+    };
+    
+    // Stop Transponder Button Handler
+    document.getElementById('stopBtn').onclick = () => {
+      isTransponderActive = false;
+      localStorage.setItem('geofs_radar_transponder_active', 'false');
+      updateStatusDot();
+      document.getElementById('stopBtn').style.display = 'none';
+      showToast('Transponder Stopped');
     };
   }
   injectFlightUI();
+  
+  // Monitor landing status to show stop button when parked
+  setInterval(() => {
+    try {
+      if (!geofs?.aircraft?.instance || !isTransponderActive) return;
+      
+      const values = geofs.animation.values;
+      const onGround = values.groundContact;
+      const speed = values.kias || 0;
+      const stopBtn = document.getElementById('stopBtn');
+      
+      // Show stop button when parked (on ground and speed < 5 knots)
+      if (onGround && speed < 5 && stopBtn) {
+        stopBtn.style.display = 'block';
+      } else if (stopBtn && stopBtn.style.display !== 'none') {
+        stopBtn.style.display = 'none';
+      }
+    } catch(e) {}
+  }, 2000);
 
   // --- Hotkey W to Toggle UI ---
   document.addEventListener('keydown', (e) => {
