@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.1.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -1109,9 +1109,6 @@ function buildPayload(snap) {
       updateStatusDot();
       refreshAirportTooltips();
       
-      // Hide stop button when activating
-      document.getElementById('stopBtn').style.display = 'none';
-      
       showToast('Transponder Updated & Active');
     };
     
@@ -1120,7 +1117,6 @@ function buildPayload(snap) {
       isTransponderActive = false;
       localStorage.setItem('geofs_radar_transponder_active', 'false');
       updateStatusDot();
-      document.getElementById('stopBtn').style.display = 'none';
       showToast('Transponder Stopped');
     };
   }
