@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      3.3.0
+// @version      3.3.2
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -459,7 +459,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '3.2.0';
+  const CURRENT_VERSION = '3.2.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -979,11 +979,10 @@ function buildPayload(snap) {
                 <input id="apiKeyInput" class="geofs-radar-input" placeholder="Paste Key from Radar Website (required)" value="${localStorage.getItem('geofs_flightradar_apikey') || ''}" style="font-size: 11px;">
             </div>
             </div>
-            <button id="saveBtn" class="geofs-radar-btn">Update Transponder</button>
-            <div style="display:flex;gap:8px;margin-top:10px;">
-                <button id="saveBtn" class="geofs-radar-btn" style="flex:1;">UPDATE TRANSPONDER</button>
-                <button id="landedBtn" class="geofs-radar-btn" style="background:rgba(59, 130, 246, 0.2);border:2px solid rgba(59, 130, 246, 0.4);color:#bfdbfe;font-weight:800;">🛬 MARK LANDED</button>
-                <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;font-weight:800;">🛑 STOP</button>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                <button id="saveBtn" class="geofs-radar-btn" style="flex:1;min-width:160px;">Update Transponder</button>
+                <button id="landedBtn" class="geofs-radar-btn" style="background:rgba(59, 130, 246, 0.2);border:2px solid rgba(59, 130, 246, 0.4);color:#bfdbfe;font-weight:800;min-width:140px;">🛬 Mark Landed</button>
+                <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;font-weight:800;min-width:80px;">🛑 Stop</button>
             </div>
         </div>
       </div>
