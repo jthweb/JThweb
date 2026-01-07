@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      3.2.0
+// @version      3.3.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -975,12 +975,16 @@ function buildPayload(snap) {
                 <input id="sqkInput" class="geofs-radar-input" placeholder="7000" maxlength="4" value="${flightInfo.squawk}">
             </div>
             <div class="geofs-radar-group" style="grid-column: span 2;">
-                <label class="geofs-radar-label">API Key (Optional)</label>
-                <input id="apiKeyInput" class="geofs-radar-input" placeholder="Paste Key from Radar Website" value="${localStorage.getItem('geofs_flightradar_apikey') || ''}" style="font-size: 11px;">
+                <label class="geofs-radar-label">API Key (Required)</label>
+                <input id="apiKeyInput" class="geofs-radar-input" placeholder="Paste Key from Radar Website (required)" value="${localStorage.getItem('geofs_flightradar_apikey') || ''}" style="font-size: 11px;">
             </div>
             </div>
             <button id="saveBtn" class="geofs-radar-btn">Update Transponder</button>
-            <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;margin-top:10px;font-weight:800;box-shadow:0 4px 12px rgba(239, 68, 68, 0.3);">🛑 STOP TRANSPONDER</button>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+                <button id="saveBtn" class="geofs-radar-btn" style="flex:1;">UPDATE TRANSPONDER</button>
+                <button id="landedBtn" class="geofs-radar-btn" style="background:rgba(59, 130, 246, 0.2);border:2px solid rgba(59, 130, 246, 0.4);color:#bfdbfe;font-weight:800;">🛬 MARK LANDED</button>
+                <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;font-weight:800;">🛑 STOP</button>
+            </div>
         </div>
       </div>
     `;
@@ -1096,12 +1100,15 @@ function buildPayload(snap) {
       flightInfo.registration = document.getElementById('regInput').value.trim();
       
       const apiKey = document.getElementById('apiKeyInput').value.trim();
-      if (apiKey) {
-          localStorage.setItem('geofs_flightradar_apikey', apiKey);
-      } else {
-          localStorage.removeItem('geofs_flightradar_apikey');
+      // API Key is required. If the user is a pilot in-game they MUST provide an API key (log into the website to get one)
+      if (!apiKey) {
+          if (geofs && geofs.userRecord && geofs.userRecord.id) {
+              return showToast('API Key required for pilots. Please log in on the website to obtain your API Key.');
+          }
+          return showToast('API Key is required. Obtain one from the website and paste it here.');
       }
 
+      localStorage.setItem('geofs_flightradar_apikey', apiKey);
       localStorage.setItem('geofs_radar_flightinfo', JSON.stringify(flightInfo));
       
       isTransponderActive = true;
@@ -1118,6 +1125,21 @@ function buildPayload(snap) {
       localStorage.setItem('geofs_radar_transponder_active', 'false');
       updateStatusDot();
       showToast('Transponder Stopped');
+    };
+
+    // Landed Button Handler - send manual land message to server
+    document.getElementById('landedBtn').onclick = () => {
+      const snap = readSnapshot();
+      if (!snap) return showToast('Unable to capture position');
+      safeSend({ type: 'manual_land', payload: {
+        callsign: getPlayerCallsign(),
+        lat: snap.lat,
+        lon: snap.lon,
+        alt: snap.altMSL || 0,
+        userId: geofs?.userRecord?.id || null,
+        ts: Date.now()
+      }});
+      showToast('Marked as Landed (admin notified)');
     };
   }
   injectFlightUI();
