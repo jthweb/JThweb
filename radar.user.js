@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      3.3.2
+// @version      3.3.3
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -105,6 +105,13 @@
       if (document.body.contains(overlay)) document.body.removeChild(overlay);
     }, duration);
 
+    // Allow clicking outside the box to dismiss the modal
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        if (document.body.contains(overlay)) document.body.removeChild(overlay);
+      }
+    };
+
     overlay.tabIndex = -1; overlay.focus();
     overlay.onkeydown = (e) => {
       if (e.key === "Enter" || e.key === "Escape") {
@@ -193,6 +200,41 @@
   };
   
   AirportManager.load();
+
+  // Cleanup: remove any stray fullscreen modal left by previous runs (prevents screen from being dark/blocked)
+  function cleanupOverlays() {
+    try {
+      const stray = document.getElementById('geofs-atc-modal');
+      if (stray && stray.parentElement) stray.parentElement.removeChild(stray);
+    } catch (e) {}
+
+    try {
+      // Safety: remove any body direct children that are full-screen fixed overlays with high z-index
+      document.querySelectorAll('body > *').forEach(el => {
+        try {
+          const cs = window.getComputedStyle(el);
+          const isFixed = cs.position === 'fixed';
+          const isFullscreen = (cs.top === '0px' && cs.left === '0px' && (cs.width === '100vw' || cs.width === '100%' || cs.width === window.innerWidth + 'px') && (cs.height === '100vh' || cs.height === '100%' || cs.height === window.innerHeight + 'px'));
+          const z = parseInt(cs.zIndex || 0, 10) || 0;
+          if (isFixed && isFullscreen && z >= 10000) {
+            el.remove();
+          }
+        } catch (err) {}
+      });
+    } catch (e) {}
+
+    try {
+      // Ensure essential UI roots are visible if they were hidden accidentally
+      const root = document.getElementById('react-root'); if (root) root.style.display = 'block';
+      const mapEl = document.getElementById('map'); if (mapEl) mapEl.style.display = 'block';
+      const cesiumEl = document.getElementById('cesiumContainer'); if (cesiumEl) cesiumEl.style.display = 'block';
+    } catch (e) {}
+  }
+
+  // Run once and for the next 20 seconds to catch transient overlays shown on load or update checks
+  cleanupOverlays();
+  const overlayCleanupInterval = setInterval(cleanupOverlays, 2000);
+  setTimeout(() => clearInterval(overlayCleanupInterval), 20000);
 
   // --- Flight Logger Integration ---
   const FlightLogger = {
@@ -459,7 +501,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '3.3.2';
+  const CURRENT_VERSION = '3.2.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -836,7 +878,9 @@ function buildPayload(snap) {
           box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
           color: #e2e8f0;
           transition: opacity 0.2s ease;
+          cursor: grab; /* indicate draggable area */
         }
+        .geofs-radar-input, .geofs-radar-btn, .geofs-radar-min-btn { cursor: default; /* interactive controls keep default cursor */ }
         .geofs-radar-header {
           font-size: 11px;
           text-transform: uppercase;
@@ -994,6 +1038,9 @@ function buildPayload(snap) {
 
     // Drag Logic
     const header = document.getElementById('radarHeader');
+    // Allow dragging from any non-interactive part of the window
+    const dragRoot = flightUI;
+
     let isDragging = false;
     let currentX;
     let currentY;
@@ -1013,42 +1060,59 @@ function buildPayload(snap) {
         }
     } catch(e) {}
 
-    header.addEventListener("mousedown", dragStart);
+    // Use the whole panel as the drag root; ignore interactive controls
+    dragRoot.addEventListener("mousedown", dragStart);
     document.addEventListener("mouseup", dragEnd);
     document.addEventListener("mousemove", drag);
 
-    function dragStart(e) {
-      // Ignore if clicking buttons inside header
-      if (e.target.closest('.geofs-radar-min-btn')) return;
-      
-      initialX = e.clientX - xOffset;
-      initialY = e.clientY - yOffset;
+    // Touch support
+    dragRoot.addEventListener("touchstart", dragStart, { passive: false });
+    document.addEventListener("touchend", dragEnd);
+    document.addEventListener("touchmove", drag, { passive: false });
 
-      if (header.contains(e.target)) {
-        isDragging = true;
-      }
+    function isInteractiveTarget(target) {
+      return target.closest('input, textarea, select, button, a, label, .geofs-radar-btn, .geofs-radar-min-btn') !== null;
+    }
+
+    function getClientXY(e) {
+      if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      return { x: e.clientX, y: e.clientY };
+    }
+
+    function dragStart(e) {
+      // Don't start dragging when interacting with form controls or buttons
+      if (isInteractiveTarget(e.target)) return;
+
+      const pos = getClientXY(e);
+      initialX = pos.x - xOffset;
+      initialY = pos.y - yOffset;
+
+      isDragging = true;
+      // visual cue
+      document.body.style.cursor = 'grabbing';
     }
 
     function dragEnd(e) {
       initialX = currentX;
       initialY = currentY;
       isDragging = false;
-      
+      document.body.style.cursor = '';
+
       // Save position
       localStorage.setItem('geofs_radar_ui_pos', JSON.stringify({ x: xOffset, y: yOffset }));
     }
 
     function drag(e) {
-      if (isDragging) {
-        e.preventDefault();
-        currentX = e.clientX - initialX;
-        currentY = e.clientY - initialY;
+      if (!isDragging) return;
+      e.preventDefault();
+      const pos = getClientXY(e);
+      currentX = pos.x - initialX;
+      currentY = pos.y - initialY;
 
-        xOffset = currentX;
-        yOffset = currentY;
+      xOffset = currentX;
+      yOffset = currentY;
 
-        setTranslate(currentX, currentY, flightUI);
-      }
+      setTranslate(currentX, currentY, flightUI);
     }
 
     function setTranslate(xPos, yPos, el) {
