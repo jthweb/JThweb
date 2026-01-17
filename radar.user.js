@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.0.0
+// @version      4.1.2
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -14,10 +14,8 @@
   'use strict';
 
   /*** CONFIG ***/
-  // If running server locally, use 'ws://localhost:6969/ws' (You may need to allow mixed content)
-  // If using public server, use 'wss://radar.yugp.me/ws'
   const WS_URL = 'wss://radar.yugp.me/ws'; 
-  const SEND_INTERVAL_MS = 1500;
+  const SEND_INTERVAL_MS = 1000;
   /*************/
 
     // ===== Modal Function =====
@@ -201,7 +199,6 @@
   
   AirportManager.load();
 
-  // Cleanup: remove any stray fullscreen modal left by previous runs (prevents screen from being dark/blocked)
   function cleanupOverlays() {
     try {
       const stray = document.getElementById('geofs-atc-modal');
@@ -209,7 +206,7 @@
     } catch (e) {}
 
     try {
-      // Safety: remove any body direct children that are full-screen fixed overlays with high z-index
+      
       document.querySelectorAll('body > *').forEach(el => {
         try {
           const cs = window.getComputedStyle(el);
@@ -224,14 +221,14 @@
     } catch (e) {}
 
     try {
-      // Ensure essential UI roots are visible if they were hidden accidentally
+      
       const root = document.getElementById('react-root'); if (root) root.style.display = 'block';
       const mapEl = document.getElementById('map'); if (mapEl) mapEl.style.display = 'block';
       const cesiumEl = document.getElementById('cesiumContainer'); if (cesiumEl) cesiumEl.style.display = 'block';
     } catch (e) {}
   }
 
-  // Run once and for the next 20 seconds to catch transient overlays shown on load or update checks
+ 
   cleanupOverlays();
   const overlayCleanupInterval = setInterval(cleanupOverlays, 2000);
   setTimeout(() => clearInterval(overlayCleanupInterval), 20000);
@@ -372,9 +369,8 @@
                  return;
              }
 
-             // Check if we have been flying for at least 30 seconds to avoid taxi false positives
+             
              if (elapsed < 30) {
-                 // Likely just taxiing or bouncing on takeoff
                  return;
              }
 
@@ -501,7 +497,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '3.2.2';
+  const CURRENT_VERSION = '4.1.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -755,44 +751,37 @@ function buildPayload(snap) {
       console.log('[ATC-Reporter] Snapshot:', snap, 'FlightInfo:', flightInfo);
   }
   
-  let flightPlan = [];
-  try {
-    if (geofs.flightPlan && typeof geofs.flightPlan.export === "function") {
-      flightPlan = geofs.flightPlan.export();
-    }
-  } catch (e) {}
- const userId = geofs?.userRecord?.id || null;
+  const flightPlan = geofs.flightPlan?.export ? geofs.flightPlan.export() : [];
+  const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
+  const userId = geofs?.userRecord?.id || null;
   
   // Use manual callsign if entered, otherwise fallback to GeoFS username
   const finalCallsign = flightInfo.flightNo ? flightInfo.flightNo : getPlayerCallsign();
 
   return {
-    id: getPlayerCallsign(), // Keep ID as unique user identifier
-    callsign: finalCallsign,
-    type: getAircraftName(),
+    id: geofs?.userRecord?.googleid || geofs?.userRecord?.callsign || getPlayerCallsign(),
+    googleId: geofs?.userRecord?.googleid || null,
+    callsign: geofs?.userRecord?.callsign || finalCallsign,
+    type: geofs?.aircraft?.instance?.aircraftRecord?.name || getAircraftName() || "Unknown",
     lat: snap.lat,
     lon: snap.lon,
     alt: (typeof snap.altAGL === 'number') ? snap.altAGL : Math.round(snap.altMSL || 0),
     altMSL: Math.round(snap.altMSL || 0),
     heading: Math.round(snap.heading || 0),
     speed: Math.round(snap.speed || 0),
-    verticalSpeed: snap.verticalSpeedFpm || 0,
-    verticalSpeedFpm: snap.verticalSpeedFpm || 0,
-    vs: snap.verticalSpeedFpm || 0,
-    windSpeed: Math.round(snap.windSpeed || 0),
-    windDir: Math.round(snap.windDir || 0),
     flightNo: flightInfo.flightNo,
-    registration: flightInfo.registration,
     departure: flightInfo.departure,
     arrival: flightInfo.arrival,
-    actualDeparture: actualDeparture,
-    actualArrival: actualArrival,
     takeoffTime: takeoffTimeUTC,
     squawk: flightInfo.squawk,
     flightPlan: flightPlan,
-    nextWaypoint: geofs.flightPlan?.trackedWaypoint?.ident || null,
+    nextWaypoint: nextWaypoint,
+    vspeed: Math.floor(geofs.animation?.values?.verticalSpeed || 0),
+    actualDeparture: actualDeparture,
+    actualArrival: actualArrival,
+    registration: flightInfo.registration,
     userId: userId,
-    playerId: userId, // Ensure stable ID generation on server
+    playerId: userId,
     apiKey: localStorage.getItem('geofs_flightradar_apikey') || null
   };
 }
