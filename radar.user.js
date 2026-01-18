@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.1.2
+// @version      4.2.5
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -14,8 +14,11 @@
   'use strict';
 
   /*** CONFIG ***/
-  const WS_URL = 'wss://radar.yugp.me/ws'; 
+  const WS_URL = 'wss://radar.yugp.me/ws';
+  const SSE_POST_URL = 'https://sse.radarthing.com/api/atc/position';
   const SEND_INTERVAL_MS = 1000;
+  // Track which airline codes we've prefetched in this session
+  const prefetchedLogos = new Set();
   /*************/
 
     // ===== Modal Function =====
@@ -497,7 +500,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.1.2';
+  const CURRENT_VERSION = '4.2.5';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -613,6 +616,33 @@
   }
   function getPlayerCallsign() {
     return geofs?.userRecord?.callsign || 'Unknown';
+  }
+
+  // Extracts an airline code (ICAO 3 / IATA 2) from a callsign string
+  function getAirlineCodeFromCallsign(callsign) {
+    const cs = (callsign || '').toString().trim().toUpperCase();
+    if (!cs) return 'GFS';
+    const match3 = cs.match(/^([A-Z]{3})/);
+    const match2 = cs.match(/^([A-Z]{2})/);
+    if (match3) return match3[1];
+    if (match2) return match2[1];
+    return 'GFS';
+  }
+
+  // Attempt to prefetch server-hosted logo to warm browser cache
+  function prefetchLogoForCallsign(callsign) {
+    try {
+      const code = getAirlineCodeFromCallsign(callsign);
+      if (!code || prefetchedLogos.has(code)) return;
+      prefetchedLogos.add(code);
+      const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+      const url = `${httpUrl}/logos/${code}.png`;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => log('[ATC-Reporter] Prefetched logo for', code);
+      img.onerror = () => { /* ignore */ };
+      img.src = url;
+    } catch (e) { /* ignore */ }
   }
   // --- AGL Calculation ---
   function calculateAGL() {
@@ -815,6 +845,27 @@ function buildPayload(snap) {
       }
       
       safeSend({ type: 'position_update', payload });
+
+      // Also send full details to external SSE endpoint (non-blocking)
+      try {
+        const ssePayload = { ...payload, flightInfo: { ...flightInfo }, ts: Date.now() };
+        const body = JSON.stringify(ssePayload);
+        // Prefer sendBeacon for reliability on unload when available
+        if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+          try {
+            const blob = new Blob([body], { type: 'application/json' });
+            navigator.sendBeacon(SSE_POST_URL, blob);
+          } catch (e) {
+            // fallback to fetch
+            fetch(SSE_POST_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(e => console.warn('[ATC-Reporter] SSE post failed', e));
+          }
+        } else {
+          fetch(SSE_POST_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(e => console.warn('[ATC-Reporter] SSE post failed', e));
+        }
+      } catch (e) { console.warn('[ATC-Reporter] SSE post error', e); }
+
+      // Prefetch corresponding airline logo once per code per session
+      try { prefetchLogoForCallsign(payload.callsign || payload.flightNo || getPlayerCallsign()); } catch (e) {}
     } catch (e) {
       console.warn('[ATC-Reporter] Periodic send error:', e);
     }
@@ -1169,6 +1220,9 @@ function buildPayload(snap) {
       refreshAirportTooltips();
       
       showToast('Transponder Updated & Active');
+      // Warm logo cache for this callsign to make logos on the website show faster
+      try { prefetchLogoForCallsign(flightInfo.flightNo || getPlayerCallsign()); } catch (e) {}
+      // Also prefetch for the registration (if present) via server-side endpoints implicitly handled by other pages
     };
     
     // Stop Transponder Button Handler
