@@ -42,8 +42,8 @@
         <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" />
       </td>
       <td align="center" width="300">
-        <h4>✈️ SAW Flight Logger System</h4>
-        <p>Comprehensive flight logging system for GeoFS Airlines with real-time tracking and reporting capabilities.</p>
+        <h4>✈️ GeoFS Flight Radar</h4>
+        <p>Comprehensive flight radar system for GeoFS with real-time tracking and reporting capabilities.</p>
         <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge"" />
       </td>
     </tr>
