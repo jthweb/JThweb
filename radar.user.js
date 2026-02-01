@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.4.2
+// @version      4.5.3
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -154,6 +154,12 @@
   let takeoffTimeUTC = '';
   let actualDeparture = null;
   let actualArrival = null;
+  
+  // Diversion tracking
+  let originalArrival = null;  // The arrival set at takeoff time
+  let divertedTo = null;       // New destination if diverted
+  let isDiverted = false;      // Whether a diversion occurred
+  let flightStartedWithArrival = false; // Whether we had an arrival set at takeoff
 
   // --- Airport Manager ---
   const AirportManager = {
@@ -254,6 +260,7 @@
     isGrounded: true,
     justLanded: false,
     teleportWarnings: 0,
+    teleportCooloffUntil: 0,
     lastPosition: null,
     lastPositionTime: null,
     
@@ -325,13 +332,29 @@
         const [lat, lon] = geofs.aircraft.instance.llaLocation || [values.latitude, values.longitude];
         const now = Date.now();
 
+      // If we recently flagged a teleport, suppress state changes until cooldown ends
+      if (this.teleportCooloffUntil && now < this.teleportCooloffUntil) {
+        this.lastPosition = { lat, lon, altitude: altitudeFt };
+        this.lastPositionTime = now;
+        return;
+      }
+
         if (this.flightStarted && this.lastPosition) {
              const dist = this.calculateDistance(this.lastPosition.lat, this.lastPosition.lon, lat, lon);
              const timeDiff = (now - this.lastPositionTime) / 1000;
-             if (timeDiff > 1 && dist > (timeDiff * 0.6) && Math.abs(altitudeFt - this.lastPosition.altitude) > (timeDiff * 200)) {
-                 this.teleportWarnings++;
-                 console.warn('[FlightLogger] Teleport detected!');
-             }
+         const tooFast = timeDiff > 0.3 && (dist / timeDiff) > 20; // >20 km/s (~10 km in 0.5s)
+         const bigJump = timeDiff <= 0.6 && dist > 10; // explicit 10 km in ~0.5s
+         if (tooFast || bigJump) {
+           this.teleportWarnings++;
+           this.teleportCooloffUntil = now + 8000;
+           this.flightStarted = false; // force a fresh start after a teleport
+           this.firstGroundContact = false;
+           this.justLanded = false;
+           console.warn('[FlightLogger] Teleport detected! Suppressing updates for 8s.');
+           this.lastPosition = { lat, lon, altitude: altitudeFt };
+           this.lastPositionTime = now;
+           return;
+         }
         }
         this.lastPosition = { lat, lon, altitude: altitudeFt };
         this.lastPositionTime = now;
@@ -402,6 +425,20 @@
                 }
 
                 this.sendLog(vs, quality);
+                try {
+                  const gsKts = typeof values.groundSpeed === 'number' ? values.groundSpeed * 1.94384 : (typeof values.kias === 'number' ? values.kias : 0);
+                  clearFlightPlan({
+                    lat,
+                    lon,
+                    altAGL: enhancedAGL,
+                    altMSL: altitudeFt,
+                    heading: values.heading360 || 0,
+                    speed: gsKts,
+                    verticalSpeedFpm: vs
+                  });
+                } catch (e) {
+                  console.warn('[FlightLogger] Failed to clear plan after landing:', e);
+                }
                 this.flightStarted = false;
                 this.justLanded = true;
              }
@@ -503,7 +540,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.4.2';
+  const CURRENT_VERSION = '4.5.3';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -690,6 +727,13 @@
           }
       }
       actualArrival = null;
+      
+      // Store the original arrival at takeoff time for diversion tracking
+      originalArrival = flightInfo.arrival || null;
+      flightStartedWithArrival = !!flightInfo.arrival;
+      divertedTo = null;
+      isDiverted = false;
+      console.log('[ATC-Reporter] Original arrival set:', originalArrival);
     }
 
     if (!wasOnGround && onGround) {
@@ -700,9 +744,31 @@
                 showToast(`Landed at ${apt.name}`);
             }
         }
+        // Reset diversion state on landing
+        originalArrival = null;
+        divertedTo = null;
+        isDiverted = false;
+        flightStartedWithArrival = false;
     }
 
     wasOnGround = onGround;
+  }
+  
+  // --- Diversion Detection ---
+  function checkDiversion() {
+    // Only check for diversion if we're in the air and had an arrival set at takeoff
+    const onGround = geofs?.aircraft?.instance?.groundContact ?? true;
+    if (onGround || !flightStartedWithArrival) return;
+    
+    const currentArrival = flightInfo.arrival;
+    
+    // If the arrival changed and it's different from the original
+    if (currentArrival && originalArrival && currentArrival !== originalArrival && currentArrival !== divertedTo) {
+      divertedTo = currentArrival;
+      isDiverted = true;
+      console.log('[ATC-Reporter] DIVERSION DETECTED! Original:', originalArrival, 'New:', divertedTo);
+      showToast(`✈️ DIVERTED to ${divertedTo}`);
+    }
   }
 
   // --- Flight Status Snapshot ---
@@ -779,6 +845,8 @@
   // --- Build Payload ---
 function buildPayload(snap) {
   checkTakeoff();
+  checkDiversion();  // Check if destination changed during flight
+  
   // Debug Log
   if (Math.random() < 0.05) { // Log occasionally to avoid spam
       console.log('[ATC-Reporter] Snapshot:', snap, 'FlightInfo:', flightInfo);
@@ -815,12 +883,58 @@ function buildPayload(snap) {
     registration: flightInfo.registration,
     userId: userId,
     playerId: userId,
-    apiKey: localStorage.getItem('geofs_flightradar_apikey') || null
+    apiKey: localStorage.getItem('geofs_flightradar_apikey') || null,
+    // Diversion information
+    isDiverted: isDiverted,
+    originalArrival: originalArrival,
+    divertedTo: divertedTo
   };
 }
 
   // --- Periodic Send ---
   let lastFlightPlanHash = "";
+
+  function clearFlightPlan(snap = null) {
+    lastFlightPlanHash = "";
+
+    try {
+      if (geofs?.flightPlan?.clear) {
+        geofs.flightPlan.clear();
+      } else if (geofs?.flightPlan) {
+        geofs.flightPlan.plan = [];
+        if ('trackedWaypoint' in geofs.flightPlan) geofs.flightPlan.trackedWaypoint = null;
+        if (typeof geofs.flightPlan.render === 'function') geofs.flightPlan.render();
+      }
+    } catch (e) {
+      console.warn('[ATC-Reporter] Failed to clear local flight plan:', e);
+    }
+
+    try {
+      const baseSnap = snap || readSnapshot();
+      const payload = {
+        id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || null,
+        googleId: geofs?.userRecord?.googleid || null,
+        callsign: flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown',
+        flightNo: flightInfo.flightNo,
+        departure: flightInfo.departure,
+        arrival: flightInfo.arrival,
+        registration: flightInfo.registration,
+        flightPlan: [],
+        nextWaypoint: null,
+        lat: baseSnap?.lat ?? null,
+        lon: baseSnap?.lon ?? null,
+        alt: Math.round(baseSnap?.altAGL ?? 0),
+        altMSL: Math.round(baseSnap?.altMSL ?? 0),
+        heading: Math.round(baseSnap?.heading ?? 0),
+        speed: Math.round(baseSnap?.speed ?? 0),
+        vspeed: Math.round(baseSnap?.verticalSpeedFpm ?? 0),
+        apiKey: localStorage.getItem('geofs_flightradar_apikey') || null
+      };
+      safeSend({ type: 'position_update', payload });
+    } catch (e) {
+      console.warn('[ATC-Reporter] Failed to push cleared flight plan:', e);
+    }
+  }
   
   setInterval(() => {
     try {
@@ -831,6 +945,11 @@ function buildPayload(snap) {
         if (Date.now() % 10000 < SEND_INTERVAL_MS) {
           safeSend({ type: 'heartbeat' });
         }
+        return;
+      }
+
+      if (FlightLogger.teleportCooloffUntil && Date.now() < FlightLogger.teleportCooloffUntil) {
+        console.warn('[ATC-Reporter] Skipping update due to recent teleport');
         return;
       }
 
@@ -1244,6 +1363,7 @@ function buildPayload(snap) {
       isTransponderActive = false;
       localStorage.setItem('geofs_radar_transponder_active', 'false');
       updateStatusDot();
+      try { clearFlightPlan(readSnapshot()); } catch (e) { console.warn('[ATC-Reporter] Failed to clear plan on stop:', e); }
       showToast('Transponder Stopped');
     };
 
@@ -1259,7 +1379,19 @@ function buildPayload(snap) {
         userId: geofs?.userRecord?.id || null,
         ts: Date.now()
       }});
-      showToast('Marked as Landed (admin notified)');
+      try { clearFlightPlan(snap); } catch (e) { console.warn('[ATC-Reporter] Failed to clear plan on manual land:', e); }
+      // Reset state so the next flight can start cleanly
+      FlightLogger.flightStarted = false;
+      FlightLogger.firstGroundContact = false;
+      FlightLogger.justLanded = true;
+      FlightLogger.teleportWarnings = 0;
+      FlightLogger.teleportCooloffUntil = 0;
+      FlightLogger.lastPosition = null;
+      FlightLogger.lastPositionTime = null;
+      isTransponderActive = false;
+      localStorage.setItem('geofs_radar_transponder_active', 'false');
+      updateStatusDot();
+      showToast('Marked as Landed — flight ended. Update Transponder to start again.');
       try { updateDetails(); } catch(e) {}
     };
 
