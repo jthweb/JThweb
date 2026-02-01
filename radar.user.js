@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.5.3
+// @version      4.5.4
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -457,37 +457,39 @@
     },
 
     sendLog(vs, quality) {
-        const callsign = getPlayerCallsign();
+      const callsign = flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown';
         
-        let webhookUrl = null;
-        let airlineCode = "GFS";
+      let webhookUrl = null;
+      let webhookCode = null;
+      let logoCode = 'GFS';
 
-        // 1. Try 3-letter ICAO code
-        const match3 = callsign.match(/^([A-Z]{3})/i);
-        if (match3) {
-            const code = match3[1].toUpperCase();
-            if (this.webhooks[code]) {
-                airlineCode = code;
-                webhookUrl = this.webhooks[code];
-            }
+      // 1. Prefer 3-letter ICAO prefix for logo; map to IATA if known for logo fetch
+      const match3 = callsign.match(/^([A-Z]{3})/i);
+      if (match3) {
+        const code = match3[1].toUpperCase();
+        logoCode = this.airlineCodes?.[code] || code;
+        if (this.webhooks[code]) {
+          webhookCode = code;
+        } else if (this.airlineCodes?.[code] && this.webhooks[this.airlineCodes[code]]) {
+          // Allow ICAO→IATA mapping for webhook lookup
+          webhookCode = this.airlineCodes[code];
         }
+      }
 
-        // 2. Try 2-letter IATA code if no ICAO match found
-        if (!webhookUrl) {
-            const match2 = callsign.match(/^([A-Z]{2})/i);
-            if (match2) {
-                const code = match2[1].toUpperCase();
-                if (this.webhooks[code]) {
-                    airlineCode = code;
-                    webhookUrl = this.webhooks[code];
-                }
-            }
+      // 2. Try 2-letter IATA prefix for webhook/logo if ICAO not matched
+      if (!webhookCode) {
+        const match2 = callsign.match(/^([A-Z]{2})/i);
+        if (match2) {
+          const code = match2[1].toUpperCase();
+          logoCode = logoCode || code;
+          if (this.webhooks[code]) {
+            webhookCode = code;
+          }
         }
+      }
 
-        // 3. Fallback to GFS
-        if (!webhookUrl) {
-             webhookUrl = this.webhooks["GFS"];
-        }
+      // 3. Fallback webhook
+      webhookUrl = webhookCode ? this.webhooks[webhookCode] : this.webhooks["GFS"];
 
         if (!webhookUrl) {
             console.warn('[FlightLogger] No webhook found for callsign:', callsign);
@@ -508,7 +510,7 @@
         // Use Server Logo Proxy
         // The server handles: Local File -> IATA Lookup -> CDN Redirect
         const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
-        const logoUrl = `${httpUrl}/logos/${airlineCode}.png`;
+        const logoUrl = `${httpUrl}/logos/${logoCode || 'GFS'}.png`;
         const flightUrl = `${httpUrl}/?flight=${encodeURIComponent(callsign)}`;
 
         const message = {
@@ -540,7 +542,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.5.3';
+  const CURRENT_VERSION = '4.5.4';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
