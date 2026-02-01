@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.2.5
+// @version      4.4.2
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -472,20 +472,23 @@
         // The server handles: Local File -> IATA Lookup -> CDN Redirect
         const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
         const logoUrl = `${httpUrl}/logos/${airlineCode}.png`;
+        const flightUrl = `${httpUrl}/?flight=${encodeURIComponent(callsign)}`;
 
         const message = {
             embeds: [{
                 title: "🛫 Flight Report - GeoFS",
+                url: flightUrl,
                 color: embedColor,
                 thumbnail: { url: logoUrl },
                 fields: [
                     { name: "✈️ Flight Information", value: `**Flight no.**: ${callsign}\n**Pilot**: ${pilotName}\n**Aircraft**: ${aircraft}`, inline: false },
                     { name: "📍 Route", value: `**Departure**: ${this.departureICAO}\n**Arrival**: ${this.arrivalICAO}`, inline: true },
                     { name: "⏱️ Duration", value: `**Time**: ${formattedDuration}`, inline: true },
-                    { name: "📊 Landing", value: `**V/S**: ${vs.toFixed(1)} fpm\n**Quality**: ${quality}\n**Bounces**: ${this.bounces}`, inline: true }
+                    { name: "📊 Landing", value: `**V/S**: ${vs.toFixed(1)} fpm\n**Quality**: ${quality}\n**Bounces**: ${this.bounces}`, inline: true },
+                    { name: "🔗 Track", value: `[View on GeoFS Radar](${flightUrl})`, inline: false }
                 ],
                 timestamp: new Date().toISOString(),
-                footer: { text: "GeoFS Flight Logger" + (this.teleportWarnings > 0 ? " | ⚠️ Teleport Detected" : "") }
+                footer: { text: "GeoFS Radar • radar.yugp.me" + (this.teleportWarnings > 0 ? " | ⚠️ Teleport Detected" : "") }
             }]
         };
 
@@ -500,7 +503,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.2.5';
+  const CURRENT_VERSION = '4.4.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -785,13 +788,13 @@ function buildPayload(snap) {
   const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
   const userId = geofs?.userRecord?.id || null;
   
-  // Use manual callsign if entered, otherwise fallback to GeoFS username
-  const finalCallsign = flightInfo.flightNo ? flightInfo.flightNo : getPlayerCallsign();
+  // Use manual callsign (flight number) if entered, otherwise fallback to player callsign, then GeoFS username
+  const finalCallsign = flightInfo.flightNo ? flightInfo.flightNo : (getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown');
 
   return {
-    id: geofs?.userRecord?.googleid || geofs?.userRecord?.callsign || getPlayerCallsign(),
+    id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || null,
     googleId: geofs?.userRecord?.googleid || null,
-    callsign: geofs?.userRecord?.callsign || finalCallsign,
+    callsign: finalCallsign,
     type: geofs?.aircraft?.instance?.aircraftRecord?.name || getAircraftName() || "Unknown",
     lat: snap.lat,
     lon: snap.lon,
@@ -1067,6 +1070,14 @@ function buildPayload(snap) {
                 <button id="saveBtn" class="geofs-radar-btn" style="flex:1;min-width:160px;">Update Transponder</button>
                 <button id="landedBtn" class="geofs-radar-btn" style="background:rgba(59, 130, 246, 0.2);border:2px solid rgba(59, 130, 246, 0.4);color:#bfdbfe;font-weight:800;min-width:140px;">🛬 Mark Landed</button>
                 <button id="stopBtn" class="geofs-radar-btn" style="background:rgba(239, 68, 68, 0.3);border:2px solid rgba(239, 68, 68, 0.5);color:#fca5a5;font-weight:800;min-width:80px;">🛑 Stop</button>
+                <button id="detailsBtn" class="geofs-radar-btn" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);color:#cbd5e1;min-width:100px;">Details</button>
+            </div>
+            <div id="radarDetails" style="margin-top:12px;display:none;background:rgba(0,0,0,0.5);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);font-size:12px;max-height:260px;overflow:auto;">
+                <div id="radarDetailsSummary" style="margin-bottom:8px;color:#e6edf3;font-weight:600;font-size:13px;">No snapshot yet.</div>
+                <!-- Day/Night preview -->
+                <canvas id="daynightPreview" width="320" height="40" style="width:100%;height:40px;border-radius:6px;display:block;margin-bottom:8px;background:linear-gradient(90deg,#000,#111);"></canvas>
+                <div id="daynightInfo" style="font-size:11px;color:#cbd5e1;margin-bottom:6px;">UTC: --:-- — Subsolar: --°</div>
+                <pre id="radarDetailsJson" style="white-space:pre-wrap;color:#cbd5e1;font-size:11px;margin:0;">{}</pre>
             </div>
         </div>
       </div>
@@ -1223,6 +1234,9 @@ function buildPayload(snap) {
       // Warm logo cache for this callsign to make logos on the website show faster
       try { prefetchLogoForCallsign(flightInfo.flightNo || getPlayerCallsign()); } catch (e) {}
       // Also prefetch for the registration (if present) via server-side endpoints implicitly handled by other pages
+
+      // Update details immediately
+      try { updateDetails(); } catch (e) {}
     };
     
     // Stop Transponder Button Handler
@@ -1246,7 +1260,102 @@ function buildPayload(snap) {
         ts: Date.now()
       }});
       showToast('Marked as Landed (admin notified)');
+      try { updateDetails(); } catch(e) {}
     };
+
+    // Details panel toggle & update
+    const detailsBtn = document.getElementById('detailsBtn');
+    const detailsWrap = document.getElementById('radarDetails');
+    const detailsSummary = document.getElementById('radarDetailsSummary');
+    const detailsJson = document.getElementById('radarDetailsJson');
+
+    detailsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!detailsWrap) return;
+      if (detailsWrap.style.display === 'none') {
+        detailsWrap.style.display = 'block';
+        detailsBtn.textContent = 'Hide Details';
+        try { drawDayNightPreview(); } catch(e) {}
+        try { updateDetails(); } catch(e) {}
+      } else {
+        detailsWrap.style.display = 'none';
+        detailsBtn.textContent = 'Details';
+      }
+    });
+
+    function updateDetails() {
+      const snap = readSnapshot();
+      if (!snap) {
+        detailsSummary.textContent = 'No snapshot available';
+        detailsJson.textContent = '{}';
+        return;
+      }
+      const payload = buildPayload(snap);
+      detailsSummary.textContent = `${payload.callsign || 'N/A'} — ${payload.type || 'Unknown'} • ${payload.departure || '-'} → ${payload.arrival || '-'}`;
+      // Pretty JSON with selected fields first
+      const out = {
+        id: payload.id, callsign: payload.callsign, flightNo: payload.flightNo, type: payload.type, registration: payload.registration,
+        lat: payload.lat, lon: payload.lon, alt: payload.alt, altMSL: payload.altMSL, heading: payload.heading, speed: payload.speed, vspeed: payload.vspeed,
+        squawk: payload.squawk, takeoffTime: payload.takeoffTime, flightPlanPoints: Array.isArray(payload.flightPlan) ? payload.flightPlan.length : 0, apiKey: payload.apiKey
+      };
+      detailsJson.textContent = JSON.stringify(out, null, 2);
+      // Also update the mini Day/Night preview when details update
+      try { drawDayNightPreview(); } catch(e) {}
+    }
+
+    function drawDayNightPreview() {
+      try {
+        const canvas = document.getElementById('daynightPreview');
+        const info = document.getElementById('daynightInfo');
+        if (!canvas) return;
+        const now = new Date();
+        const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
+        const subsolarLon = ((utcHours - 12) * 15 + 540) % 360 - 180;
+        const midnightLon = (((subsolarLon + 180) % 360 + 360) % 360) - 180;
+        const centerPercent = ((midnightLon + 180) / 360);
+        const ctx = canvas.getContext('2d');
+        // Handle HiDPI scaling
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = canvas.clientWidth || 320;
+        const cssH = canvas.clientHeight || 40;
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+        canvas.style.width = cssW + 'px';
+        canvas.style.height = cssH + 'px';
+        ctx.scale(dpr, dpr);
+        const w = cssW;
+        const h = cssH;
+        // Build gradient similar to map overlay
+        const grad = ctx.createLinearGradient(0, 0, w, 0);
+        const addStop = (p, a) => grad.addColorStop(Math.max(0, Math.min(1, p)), `rgba(0,0,0,${a})`);
+        addStop(centerPercent - 0.4, 0);
+        addStop(centerPercent - 0.3, 0.12);
+        addStop(centerPercent - 0.12, 0.28);
+        addStop(centerPercent, 0.6);
+        addStop(centerPercent + 0.12, 0.28);
+        addStop(centerPercent + 0.3, 0.12);
+        addStop(centerPercent + 0.4, 0);
+        // Draw background and gradient
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#071020';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        // Subsolar marker
+        const subsolarX = ((subsolarLon + 180) / 360) * w;
+        ctx.fillStyle = 'rgba(255,223,99,0.95)';
+        ctx.beginPath();
+        ctx.arc(subsolarX, h / 2, Math.max(2, h * 0.15), 0, Math.PI * 2);
+        ctx.fill();
+        if (info) info.textContent = `UTC: ${now.getUTCHours().toString().padStart(2,'0')}:${now.getUTCMinutes().toString().padStart(2,'0')} — Subsolar: ${subsolarLon.toFixed(1)}°`;
+      } catch(e) { }
+    }
+
+    // Update the preview every minute
+    setInterval(() => { try { drawDayNightPreview(); } catch(e) {} }, 60 * 1000);
+
+    // Update details while transponder is active
+    setInterval(() => { try { if (isTransponderActive) updateDetails(); } catch(e) {} }, 2000);
   }
   injectFlightUI();
   
