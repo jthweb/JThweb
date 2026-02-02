@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.5.4
+// @version      4.5.5
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -542,7 +542,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.5.4';
+  const CURRENT_VERSION = '4.5.5';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
