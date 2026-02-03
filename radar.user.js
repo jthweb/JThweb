@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.6.7
+// @version      4.6.8
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -132,42 +132,15 @@
 
   function log(...args) {
     console.log('[ATC-Reporter]', ...args);
-    try { atcDebugLog('[ATC-Reporter] ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')); } catch(e) {}
   }
 
   // --- On-screen Debug Panel (helps when browser console isn't available) ---
   const ATC_ICON_COLOR = '#fbd500';
   const ATC_ICON_BORDER = '#000000';
 
-  function createDebugPanel() {
-    if (document.getElementById('atc-debug-panel')) return;
-    const panel = document.createElement('div');
-    panel.id = 'atc-debug-panel';
-    panel.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:100000;background:rgba(0,0,0,0.8);color:#fff;padding:8px;border-radius:8px;max-width:360px;max-height:260px;overflow:auto;font-family:monospace;font-size:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6);';
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;';
-    const title = document.createElement('div'); title.textContent = 'ATC Debug'; title.style.fontWeight = '700'; title.style.fontSize = '12px';
-    const btn = document.createElement('button'); btn.textContent = 'Clear'; btn.style.cssText = 'margin-left:auto;padding:4px 8px;border-radius:6px;border:none;background:#222;color:#fff;cursor:pointer;';
-    btn.onclick = () => { const c = panel.querySelector('.atc-debug-logs'); if (c) c.innerHTML = ''; };
-    header.appendChild(title); header.appendChild(btn);
-    const content = document.createElement('div'); content.className = 'atc-debug-logs';
-    panel.appendChild(header); panel.appendChild(content);
-    document.body.appendChild(panel);
-  }
 
-  function atcDebugLog(msg) {
-    try {
-      if (!document.body) return;
-      createDebugPanel();
-      const c = document.querySelector('#atc-debug-panel .atc-debug-logs');
-      if (!c) return;
-      const line = document.createElement('div');
-      line.textContent = `[${new Date().toLocaleTimeString()}] ${String(msg)};`;
-      c.appendChild(line);
-      // Limit to last 200 lines
-      while (c.children.length > 200) c.removeChild(c.children[0]);
-    } catch (e) { try { console.warn('[ATC-Reporter] debug log failed', e); } catch(_){} }
-  }
+  // atcDebugLog removed (on-screen debug panel disabled)
+
 
 
   // --- Global Variables ---
@@ -578,7 +551,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.6.7';
+  const CURRENT_VERSION = '4.6.8';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1006,7 +979,7 @@ function buildPayload(snap) {
           lastFlightPlanHash = currentPlanHash;
       }
       
-      try { console.log('[ATC-Reporter] Sending position_update', { callsign: payload.callsign, type: payload.type, iconColor: payload.iconColor }); atcDebugLog(`[SEND] callsign=${payload.callsign} type="${payload.type}" color=${payload.iconColor}`); } catch(e){}
+      try { console.log('[ATC-Reporter] Sending position_update', { callsign: payload.callsign, type: payload.type, iconColor: payload.iconColor }); } catch(e){}
       safeSend({ type: 'position_update', payload });
 
       // Also send full details to external SSE endpoint (non-blocking)
