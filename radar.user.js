@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.6.8
+// @version      4.7.0
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -135,7 +135,7 @@
   }
 
   // --- On-screen Debug Panel (helps when browser console isn't available) ---
-  const ATC_ICON_COLOR = '#fbd500';
+  const ATC_ICON_COLOR = '#ffd700';
   const ATC_ICON_BORDER = '#000000';
 
 
@@ -551,7 +551,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.6.8';
+  const CURRENT_VERSION = '4.7.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
