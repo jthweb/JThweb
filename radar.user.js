@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.7.0
+// @version      4.7.2
 // @description  Transmits GeoFS flight data to the radar server
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -16,6 +16,10 @@
   /*** CONFIG ***/
   const WS_URL = 'wss://radar.yugp.me/ws';
   const SSE_POST_URL = 'https://sse.radarthing.com/api/atc/position';
+  const RADARTHING_WS_URL = SSE_POST_URL
+    .replace('https://', 'wss://')
+    .replace('http://', 'ws://')
+    .replace('/api/atc/position', '/ws');
   const SEND_INTERVAL_MS = 1000;
   // Track which airline codes we've prefetched in this session
   const prefetchedLogos = new Set();
@@ -551,7 +555,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.7.0';
+  const CURRENT_VERSION = '4.7.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -570,6 +574,7 @@
 })();
   // --- WebSocket Management ---
   let ws;
+  let radarthingWs;
   function updateStatusDot() {
     const statusDot = document.querySelector('.geofs-radar-status');
     if (!statusDot) return;
@@ -641,6 +646,25 @@
   }
   connect();
 
+  function connectRadarthing() {
+    if (radarthingWs && (radarthingWs.readyState === 0 || radarthingWs.readyState === 1)) return;
+    try {
+      radarthingWs = new WebSocket(RADARTHING_WS_URL);
+      radarthingWs.addEventListener('open', () => {
+        log('RadarThing WS connected to ' + RADARTHING_WS_URL);
+      });
+      radarthingWs.addEventListener('close', () => {
+        setTimeout(connectRadarthing, 4000);
+      });
+      radarthingWs.addEventListener('error', () => {
+        try { radarthingWs.close(); } catch {}
+      });
+    } catch (e) {
+      setTimeout(connectRadarthing, 4000);
+    }
+  }
+  connectRadarthing();
+
   // Some browsers/userscript engines miss a single event-driven update;
   // keep the status dot accurate across reconnects/UI timing.
   setInterval(updateStatusDot, 1000);
@@ -650,6 +674,14 @@
       if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
     } catch (e) {
       console.warn('[ATC-Reporter] send error', e);
+    }
+  }
+
+  function safeSendRadarthing(obj) {
+    try {
+      if (radarthingWs && radarthingWs.readyState === 1) radarthingWs.send(JSON.stringify(obj));
+    } catch (e) {
+      console.warn('[ATC-Reporter] RadarThing send error', e);
     }
   }
 
@@ -863,7 +895,8 @@ function buildPayload(snap) {
       console.log('[ATC-Reporter] Snapshot:', snap, 'FlightInfo:', flightInfo);
   }
   
-  const flightPlan = geofs.flightPlan?.export ? geofs.flightPlan.export() : [];
+  const rawPlan = geofs.flightPlan?.export ? geofs.flightPlan.export() : (geofs.flightPlan?.plan || geofs.flightPlan?.waypoints || geofs.flightPlan?.route || []);
+  const flightPlan = Array.isArray(rawPlan) ? rawPlan : (rawPlan?.points && Array.isArray(rawPlan.points) ? rawPlan.points : []);
   const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
   const userId = geofs?.userRecord?.id || null;
   
@@ -1000,6 +1033,12 @@ function buildPayload(snap) {
         }
       } catch (e) { console.warn('[ATC-Reporter] SSE post error', e); }
 
+      // Send to RadarThing WebSocket if available
+      try {
+        const wsPayload = { type: 'position_update', payload: { ...payload, flightInfo: { ...flightInfo }, ts: Date.now() } };
+        safeSendRadarthing(wsPayload);
+      } catch (e) { console.warn('[ATC-Reporter] RadarThing WS error', e); }
+
       // Prefetch corresponding airline logo once per code per session
       try { prefetchLogoForCallsign(payload.callsign || payload.flightNo || getPlayerCallsign()); } catch (e) {}
     } catch (e) {
@@ -1042,34 +1081,35 @@ function buildPayload(snap) {
 
     flightUI.innerHTML = `
       <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
         .geofs-radar-panel {
-          font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          width: 240px;
-          background: rgba(22, 25, 32, 0.65);
-          backdrop-filter: blur(12px) saturate(180%);
-          -webkit-backdrop-filter: blur(12px) saturate(180%);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 16px;
-          padding: 20px;
-          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+          font-family: "Rajdhani", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          width: 260px;
+          background: linear-gradient(160deg, rgba(10, 18, 28, 0.95), rgba(7, 12, 18, 0.75));
+          backdrop-filter: blur(14px) saturate(170%);
+          -webkit-backdrop-filter: blur(14px) saturate(170%);
+          border: 1px solid rgba(90, 200, 255, 0.18);
+          border-radius: 18px;
+          padding: 18px;
+          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
           color: #e2e8f0;
           transition: opacity 0.2s ease;
           cursor: grab; /* indicate draggable area */
         }
         .geofs-radar-input, .geofs-radar-btn, .geofs-radar-min-btn { cursor: default; /* interactive controls keep default cursor */ }
         .geofs-radar-header {
-          font-size: 11px;
+          font-size: 12px;
           text-transform: uppercase;
-          letter-spacing: 2px;
-          color: rgba(255, 255, 255, 0.8);
-          margin-bottom: 16px;
-          font-weight: 800;
+          letter-spacing: 2.5px;
+          color: rgba(187, 230, 255, 0.9);
+          margin-bottom: 14px;
+          font-weight: 700;
           display: flex;
           justify-content: space-between;
           align-items: center;
           cursor: move;
           user-select: none;
-          text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+          text-shadow: 0 2px 8px rgba(0,0,0,0.4);
         }
         .geofs-radar-header-controls {
             display: flex;
@@ -1107,18 +1147,18 @@ function buildPayload(snap) {
           letter-spacing: 0.5px;
         }
         .geofs-radar-input {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 8px;
+          background: rgba(6, 16, 26, 0.7);
+          border: 1px solid rgba(90, 200, 255, 0.18);
+          border-radius: 10px;
           padding: 8px 10px;
-          color: #fff;
+          color: #e5f6ff;
           font-size: 13px;
           font-weight: 600;
           width: 100%;
           box-sizing: border-box;
           transition: all 0.2s;
           text-transform: uppercase;
-          font-family: monospace;
+          font-family: "Courier New", monospace;
         }
         .geofs-radar-input:focus {
           outline: none;
@@ -1128,15 +1168,15 @@ function buildPayload(snap) {
         }
         .geofs-radar-btn {
           width: 100%;
-          background: rgba(59, 130, 246, 0.2);
-          border: 1px solid rgba(59, 130, 246, 0.3);
-          border-radius: 8px;
-          color: #60a5fa;
+          background: linear-gradient(135deg, rgba(0, 200, 255, 0.18), rgba(0, 140, 255, 0.12));
+          border: 1px solid rgba(90, 200, 255, 0.4);
+          border-radius: 10px;
+          color: #9be7ff;
           padding: 10px;
           font-size: 12px;
           font-weight: 700;
           cursor: pointer;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.8px;
           text-transform: uppercase;
           transition: all 0.2s;
           backdrop-filter: blur(4px);
@@ -1532,5 +1572,50 @@ function buildPayload(snap) {
       e.stopPropagation();
     }
   }, true);
+
+  // --- Live Chat Scraper (ATC Audio Support) ---
+  function initChatScraper() {
+    console.log('[ATC-Reporter] Chat Scraper initializing...');
+    // Common selectors for GeoFS chat
+    const selectors = ['.geofs-chat-messages', '.geofs-chat-msg', 'li.geofs-chat-message', '.geofs-chat-list'];
+    
+    // Attempt to find container
+    let container = null;
+    for (const s of selectors) {
+       const el = document.querySelector(s);
+       if(el) { container = el; console.log('[ATC-Reporter] Found chat container:', s); break; }
+    }
+    // If specific container not found, watch body (fallback, less efficient but works)
+    if (!container) container = document.body;
+
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1) {
+                        const text = node.textContent || node.innerText;
+                        // Heuristic: check if it looks like a chat line
+                        const isChat = (node.className && (node.className.includes('chat') || node.className.includes('msg'))) || 
+                                       (node.parentNode && node.parentNode.className && node.parentNode.className.includes('chat'));
+                        
+                        if ((isChat || container.className.includes('chat')) && text && text.trim().length > 0) {
+                            // Send to server via existing WebSocket if open
+                            // `ws` is defined in the upper closure scope
+                            if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'chat', text: text.trim().substring(0, 200) }));
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    });
+    
+    observer.observe(container, { childList: true, subtree: true });
+    console.log('[ATC-Reporter] Chat Scraper started.');
+  }
+
+  // Delay initialization to ensure GeoFS UI is loaded
+  setTimeout(initChatScraper, 8000);
 
 })();
