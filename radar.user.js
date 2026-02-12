@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.7.2
-// @description  Transmits GeoFS flight data to the radar server
+// @version      4.8.0
+// @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
 // @match        https://geo-fs.com/geofs.php*
@@ -555,7 +555,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.7.2';
+  const CURRENT_VERSION = '4.8.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -903,10 +903,19 @@ function buildPayload(snap) {
   // Use manual callsign (flight number) if entered, otherwise fallback to player callsign, then GeoFS username
   const finalCallsign = flightInfo.flightNo ? flightInfo.flightNo : (getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown');
 
+  // Detect username
+  const username = geofs?.userRecord?.callsign || geofs?.userRecord?.firstname || "Unknown Pilot";
+
+  // Session ID for anonymous users to prevent collisions
+  if (!window.radarSessionId) {
+      window.radarSessionId = 'anon_' + Math.random().toString(36).substring(2, 10);
+  }
+
   return {
-    id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || null,
+    id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || window.radarSessionId,
     googleId: geofs?.userRecord?.googleid || null,
     callsign: finalCallsign,
+    username: username,
     type: geofs?.aircraft?.instance?.aircraftRecord?.name || getAircraftName() || "Unknown",
     lat: snap.lat,
     lon: snap.lon,
@@ -1575,47 +1584,360 @@ function buildPayload(snap) {
 
   // --- Live Chat Scraper (ATC Audio Support) ---
   function initChatScraper() {
-    console.log('[ATC-Reporter] Chat Scraper initializing...');
-    // Common selectors for GeoFS chat
-    const selectors = ['.geofs-chat-messages', '.geofs-chat-msg', 'li.geofs-chat-message', '.geofs-chat-list'];
+    console.log('[ATC-Reporter] Chat Hook initializing...');
     
-    // Attempt to find container
-    let container = null;
-    for (const s of selectors) {
-       const el = document.querySelector(s);
-       if(el) { container = el; console.log('[ATC-Reporter] Found chat container:', s); break; }
+    if (typeof geofs === 'undefined' || !geofs.chat) {
+        console.warn('[ATC-Reporter] geofs.chat not ready, retrying...');
+        setTimeout(initChatScraper, 3000);
+        return;
     }
-    // If specific container not found, watch body (fallback, less efficient but works)
-    if (!container) container = document.body;
 
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) {
-                        const text = node.textContent || node.innerText;
-                        // Heuristic: check if it looks like a chat line
-                        const isChat = (node.className && (node.className.includes('chat') || node.className.includes('msg'))) || 
-                                       (node.parentNode && node.parentNode.className && node.parentNode.className.includes('chat'));
-                        
-                        if ((isChat || container.className.includes('chat')) && text && text.trim().length > 0) {
-                            // Send to server via existing WebSocket if open
-                            // `ws` is defined in the upper closure scope
-                            if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({ type: 'chat', text: text.trim().substring(0, 200) }));
-                            }
-                        }
-                    }
-                });
+    if (geofs.chat._hooked) return;
+
+    try {
+        const originalReceive = geofs.chat.receive;
+        geofs.chat.receive = function(id, name, text) {
+            // Forward to Radar Server
+            if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+                // Clean the text if needed (sometimes contains HTML)
+                const cleanText = text.replace(/<[^>]*>?/gm, '');
+                ws.send(JSON.stringify({ type: 'chat', text: cleanText, sender: name || 'Unknown' }));
             }
-        });
-    });
-    
-    observer.observe(container, { childList: true, subtree: true });
-    console.log('[ATC-Reporter] Chat Scraper started.');
+            // Call original to display in game
+            if (originalReceive) originalReceive.call(geofs.chat, id, name, text);
+        };
+        geofs.chat._hooked = true;
+        console.log('[ATC-Reporter] Chat Hook installed successfully.');
+    } catch (e) {
+        console.error('[ATC-Reporter] Failed to hook chat:', e);
+    }
   }
 
   // Delay initialization to ensure GeoFS UI is loaded
   setTimeout(initChatScraper, 8000);
+
+  // --- AI ATC Chat Box (In-Game) ---
+  function createAIATCChatBox() {
+    console.log('[ATC-Reporter] Creating AI ATC Chat Box...');
+    
+    // Check if already exists
+    if (document.getElementById('geofs-ai-atc-panel')) return;
+    
+    // Create floating button
+    const floatingBtn = document.createElement('div');
+    floatingBtn.id = 'geofs-ai-atc-button';
+    floatingBtn.innerHTML = '<i style="font-size: 20px;">🛩️</i>';
+    floatingBtn.title = 'AI Air Traffic Control';
+    floatingBtn.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
+      transition: all 0.3s;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+    `;
+    
+    floatingBtn.onmouseenter = function() {
+      this.style.transform = 'scale(1.1)';
+      this.style.boxShadow = '0 6px 20px rgba(168, 85, 247, 0.6)';
+    };
+    
+    floatingBtn.onmouseleave = function() {
+      this.style.transform = 'scale(1)';
+      this.style.boxShadow = '0 4px 12px rgba(168, 85, 247, 0.4)';
+    };
+    
+    // Create chat panel
+    const chatPanel = document.createElement('div');
+    chatPanel.id = 'geofs-ai-atc-panel';
+    chatPanel.style.cssText = `
+      position: fixed;
+      bottom: 90px;
+      right: 20px;
+      width: 380px;
+      height: 500px;
+      background: rgba(10, 17, 24, 0.98);
+      backdrop-filter: blur(12px);
+      border-radius: 16px;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+      display: none;
+      flex-direction: column;
+      z-index: 10000;
+      overflow: hidden;
+    `;
+    
+    // Header
+    const header = document.createElement('div');
+    header.style.cssText = `
+      padding: 16px;
+      background: rgba(168, 85, 247, 0.15);
+      border-bottom: 1px solid rgba(168, 85, 247, 0.3);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    `;
+    header.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 20px;">🛩️</span>
+        <div>
+          <div style="font-weight: 700; font-size: 14px; color: #e9ecef;">AI ATC</div>
+          <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Air Traffic Control</div>
+        </div>
+      </div>
+      <button id="ai-atc-close" style="
+        background: transparent;
+        border: none;
+        color: #e9ecef;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.2s;
+      ">×</button>
+    `;
+    
+    // Messages area
+    const messagesArea = document.createElement('div');
+    messagesArea.id = 'ai-atc-messages';
+    messagesArea.style.cssText = `
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    `;
+    
+    // Input area
+    const inputArea = document.createElement('div');
+    inputArea.style.cssText = `
+      padding: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      gap: 8px;
+    `;
+    
+    const input = document.createElement('input');
+    input.id = 'ai-atc-input';
+    input.type = 'text';
+    input.placeholder = 'Request clearance, ask for vectors...';
+    input.style.cssText = `
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #e9ecef;
+      font-size: 13px;
+      outline: none;
+    `;
+    
+    const sendBtn = document.createElement('button');
+    sendBtn.id = 'ai-atc-send';
+    sendBtn.innerHTML = '➤';
+    sendBtn.style.cssText = `
+      background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%);
+      border: none;
+      border-radius: 8px;
+      width: 40px;
+      height: 40px;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    `;
+    
+    sendBtn.onmouseenter = function() {
+      this.style.transform = 'scale(1.05)';
+    };
+    
+    sendBtn.onmouseleave = function() {
+      this.style.transform = 'scale(1)';
+    };
+    
+    inputArea.appendChild(input);
+    inputArea.appendChild(sendBtn);
+    
+    chatPanel.appendChild(header);
+    chatPanel.appendChild(messagesArea);
+    chatPanel.appendChild(inputArea);
+    
+    document.body.appendChild(floatingBtn);
+    document.body.appendChild(chatPanel);
+    
+    // Event handlers
+    floatingBtn.onclick = function() {
+      const panel = document.getElementById('geofs-ai-atc-panel');
+      if (panel.style.display === 'none' || !panel.style.display) {
+        panel.style.display = 'flex';
+        // Check if API key is set
+        if (!localStorage.getItem('gemini_api_key')) {
+          addAIMessage('Welcome to AI ATC! To get started, you need to set up your Gemini API key. Get one for free at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #a855f7;">Google AI Studio</a> and set it in the AI ATC page.');
+        } else {
+          if (document.getElementById('ai-atc-messages').children.length === 0) {
+            addAIMessage('Good day! This is approach control. State your callsign and intentions.');
+          }
+        }
+      } else {
+        panel.style.display = 'none';
+      }
+    };
+    
+    document.getElementById('ai-atc-close').onclick = function() {
+      document.getElementById('geofs-ai-atc-panel').style.display = 'none';
+    };
+    
+    sendBtn.onclick = sendAIMessage;
+    input.onkeypress = function(e) {
+      if (e.key === 'Enter') sendAIMessage();
+    };
+    
+    console.log('[ATC-Reporter] AI ATC Chat Box created successfully.');
+  }
+  
+  let aiConversationHistory = [];
+  
+  function addAIMessage(text, sender = 'ATC', type = 'atc') {
+    const messagesDiv = document.getElementById('ai-atc-messages');
+    if (!messagesDiv) return;
+    
+    const msg = document.createElement('div');
+    msg.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      ${type === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;'}
+    `;
+    
+    const bubble = document.createElement('div');
+    bubble.style.cssText = `
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      ${type === 'user'
+        ? 'background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%); color: white;'
+        : 'background: rgba(255, 255, 255, 0.08); color: #e9ecef; border: 1px solid rgba(255, 255, 255, 0.1);'}
+    `;
+    bubble.innerHTML = text;
+    
+    const senderLabel = document.createElement('div');
+    senderLabel.textContent = sender;
+    senderLabel.style.cssText = `
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.5);
+      padding: 0 4px;
+    `;
+    
+    msg.appendChild(senderLabel);
+    msg.appendChild(bubble);
+    messagesDiv.appendChild(msg);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+  
+  async function sendAIMessage() {
+    const input = document.getElementById('ai-atc-input');
+    const sendBtn = document.getElementById('ai-atc-send');
+    const text = input.value.trim();
+    if (!text) return;
+    
+    const apiKey = localStorage.getItem('gemini_api_key');
+    if (!apiKey) {
+      addAIMessage('Please set up your API key first. Visit the <a href="/ai-atc.html" target="_blank" style="color: #a855f7;">AI ATC page</a> to configure it.');
+      return;
+    }
+    
+    input.value = '';
+    addAIMessage(text, 'You', 'user');
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '⏳';
+    
+    // Build flight context
+    const flightContext = buildFlightContext();
+    const prompt = `You are an Air Traffic Controller (ATC). The pilot says: "${text}"\n\nFlight Context:\n${flightContext}\n\nRespond as ATC would (professional, concise, use aviation phraseology). Give clearances, vectors, or information as appropriate.`;
+    
+    aiConversationHistory.push({ role: 'user', parts: [{ text: prompt }] });
+    
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: aiConversationHistory,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 200
+          }
+        })
+      });
+      
+      const data = await response.json();
+      if (data.candidates && data.candidates[0]) {
+        const reply = data.candidates[0].content.parts[0].text;
+        aiConversationHistory.push({ role: 'model', parts: [{ text: reply }] });
+        addAIMessage(reply);
+      } else {
+        throw new Error('Invalid response');
+      }
+    } catch (e) {
+      console.error('[AI ATC] Error:', e);
+      addAIMessage("Sorry, I'm having trouble receiving your transmission. Please check your API key and try again.");
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.innerHTML = '➤';
+    }
+  }
+  
+  function buildFlightContext() {
+    const lines = [];
+    try {
+      if (typeof geofs !== 'undefined' && geofs.aircraft) {
+        const aircraft = geofs.aircraft;
+        const pos = aircraft.llaLocation;
+        
+        if (geofs.userRecord && geofs.userRecord.callsign) {
+          lines.push(`Callsign: ${geofs.userRecord.callsign}`);
+        }
+        
+        if (aircraft.aircraftRecord && aircraft.aircraftRecord.name) {
+          lines.push(`Aircraft: ${aircraft.aircraftRecord.name}`);
+        }
+        
+        if (pos && pos[0] && pos[1]) {
+          lines.push(`Position: ${pos[0].toFixed(2)}°, ${pos[1].toFixed(2)}°`);
+        }
+        
+        if (aircraft.groundAltitude != null) {
+          const alt = Math.round(aircraft.groundAltitude * 3.28084); // m to ft
+          lines.push(`Altitude: ${alt} feet`);
+        }
+        
+        if (aircraft.kias != null) {
+          lines.push(`Speed: ${Math.round(aircraft.kias)} knots`);
+        }
+        
+        if (aircraft.hud && aircraft.hud.heading != null) {
+          lines.push(`Heading: ${Math.round(aircraft.hud.heading)}°`);
+        }
+      }
+    } catch (e) {
+      console.error('[AI ATC] Error building context:', e);
+    }
+    return lines.length > 0 ? lines.join('\\n') : 'Position unknown';
+  }
+  
+  // Initialize AI ATC Chat Box after GeoFS loads
+  setTimeout(createAIATCChatBox, 10000);
 
 })();
