@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.8.1
+// @version      4.8.3
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -555,7 +555,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.8.1';
+  const CURRENT_VERSION = '4.8.3';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -627,7 +627,17 @@
       ws.addEventListener('open', () => {
         log('WS connected to ' + WS_URL);
         updateStatusDot();
-        safeSend({ type: 'hello', role: 'player' });
+        const identity = getActivePilotIdentity();
+        safeSend({
+          type: 'hello',
+          role: 'player',
+          id: identity.stablePilotId,
+          userId: identity.geofsUserId,
+          googleId: identity.googleId,
+          callsign: identity.flightCallsign,
+          username: identity.displayName,
+          apiKey: identity.apiKey
+        });
         showToast('Connected to Radar Server');
       });
       ws.addEventListener('close', () => {
@@ -699,6 +709,41 @@
   }
   function getPlayerCallsign() {
     return geofs?.userRecord?.callsign || 'Unknown';
+  }
+
+  function getActivePilotIdentity() {
+    if (!window.radarSessionId) {
+      window.radarSessionId = 'anon_' + Math.random().toString(36).substring(2, 10);
+    }
+
+    const geofsUserId = geofs?.userRecord?.id ?? null;
+    const googleId = geofs?.userRecord?.googleid ?? null;
+    const nativeCallsign = String(geofs?.userRecord?.callsign || '').trim();
+    const manualCallsign = String(flightInfo?.flightNo || '').trim();
+    const first = String(geofs?.userRecord?.firstname || '').trim();
+    const last = String(geofs?.userRecord?.lastname || '').trim();
+    const fullName = [first, last].filter(Boolean).join(' ').trim();
+    const displayName = nativeCallsign || fullName || 'Unknown Pilot';
+    const flightCallsign = manualCallsign || nativeCallsign || 'Unknown';
+    const apiKey = localStorage.getItem('geofs_flightradar_apikey') || null;
+
+    let stablePilotId = window.radarSessionId;
+    if (geofsUserId != null && geofsUserId !== '') {
+      stablePilotId = `geofs_${String(geofsUserId)}`;
+    } else if (googleId) {
+      stablePilotId = `google_${String(googleId)}`;
+    } else if (nativeCallsign) {
+      stablePilotId = `callsign_${nativeCallsign.toUpperCase()}`;
+    }
+
+    return {
+      stablePilotId,
+      geofsUserId,
+      googleId,
+      displayName,
+      flightCallsign,
+      apiKey
+    };
   }
 
   // Extracts an airline code (ICAO 3 / IATA 2) from a callsign string
@@ -889,6 +934,7 @@
 function buildPayload(snap) {
   checkTakeoff();
   checkDiversion();  // Check if destination changed during flight
+  const identity = getActivePilotIdentity();
   
   // Debug Log
   if (Math.random() < 0.05) { // Log occasionally to avoid spam
@@ -898,24 +944,13 @@ function buildPayload(snap) {
   const rawPlan = geofs.flightPlan?.export ? geofs.flightPlan.export() : (geofs.flightPlan?.plan || geofs.flightPlan?.waypoints || geofs.flightPlan?.route || []);
   const flightPlan = Array.isArray(rawPlan) ? rawPlan : (rawPlan?.points && Array.isArray(rawPlan.points) ? rawPlan.points : []);
   const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
-  const userId = geofs?.userRecord?.id || null;
-  
-  // Use manual callsign (flight number) if entered, otherwise fallback to player callsign, then GeoFS username
-  const finalCallsign = flightInfo.flightNo ? flightInfo.flightNo : (getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown');
-
-  // Detect username
-  const username = geofs?.userRecord?.callsign || geofs?.userRecord?.firstname || "Unknown Pilot";
-
-  // Session ID for anonymous users to prevent collisions
-  if (!window.radarSessionId) {
-      window.radarSessionId = 'anon_' + Math.random().toString(36).substring(2, 10);
-  }
+  const userId = identity.geofsUserId;
 
   return {
-    id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || window.radarSessionId,
-    googleId: geofs?.userRecord?.googleid || null,
-    callsign: finalCallsign,
-    username: username,
+    id: identity.stablePilotId,
+    googleId: identity.googleId,
+    callsign: identity.flightCallsign,
+    username: identity.displayName,
     type: geofs?.aircraft?.instance?.aircraftRecord?.name || getAircraftName() || "Unknown",
     lat: snap.lat,
     lon: snap.lon,
@@ -936,7 +971,7 @@ function buildPayload(snap) {
     registration: flightInfo.registration,
     userId: userId,
     playerId: userId,
-    apiKey: localStorage.getItem('geofs_flightradar_apikey') || null,
+    apiKey: identity.apiKey,
     // Diversion information
     isDiverted: isDiverted,
     originalArrival: originalArrival,
@@ -949,6 +984,7 @@ function buildPayload(snap) {
 
   function clearFlightPlan(snap = null) {
     lastFlightPlanHash = "";
+    const identity = getActivePilotIdentity();
 
     try {
       if (geofs?.flightPlan?.clear) {
@@ -965,9 +1001,12 @@ function buildPayload(snap) {
     try {
       const baseSnap = snap || readSnapshot();
       const payload = {
-        id: geofs?.userRecord?.googleid || flightInfo.flightNo || getPlayerCallsign() || null,
-        googleId: geofs?.userRecord?.googleid || null,
-        callsign: flightInfo.flightNo || getPlayerCallsign() || geofs?.userRecord?.callsign || 'Unknown',
+        id: identity.stablePilotId,
+        googleId: identity.googleId,
+        callsign: identity.flightCallsign,
+        username: identity.displayName,
+        userId: identity.geofsUserId,
+        playerId: identity.geofsUserId,
         flightNo: flightInfo.flightNo,
         departure: flightInfo.departure,
         arrival: flightInfo.arrival,
@@ -981,7 +1020,7 @@ function buildPayload(snap) {
         heading: Math.round(baseSnap?.heading ?? 0),
         speed: Math.round(baseSnap?.speed ?? 0),
         vspeed: Math.round(baseSnap?.verticalSpeedFpm ?? 0),
-        apiKey: localStorage.getItem('geofs_flightradar_apikey') || null
+        apiKey: identity.apiKey
       };
       safeSend({ type: 'position_update', payload });
     } catch (e) {
@@ -1434,12 +1473,17 @@ function buildPayload(snap) {
     document.getElementById('landedBtn').onclick = () => {
       const snap = readSnapshot();
       if (!snap) return showToast('Unable to capture position');
+      const identity = getActivePilotIdentity();
       safeSend({ type: 'manual_land', payload: {
-        callsign: getPlayerCallsign(),
+        id: identity.stablePilotId,
+        callsign: identity.flightCallsign,
         lat: snap.lat,
         lon: snap.lon,
         alt: snap.altMSL || 0,
-        userId: geofs?.userRecord?.id || null,
+        userId: identity.geofsUserId,
+        googleId: identity.googleId,
+        username: identity.displayName,
+        apiKey: identity.apiKey,
         ts: Date.now()
       }});
       try { clearFlightPlan(snap); } catch (e) { console.warn('[ATC-Reporter] Failed to clear plan on manual land:', e); }
