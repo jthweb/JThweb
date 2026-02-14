@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.8.3
+// @version      4.8.5
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -555,7 +555,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.8.3';
+  const CURRENT_VERSION = '4.8.5';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1435,15 +1435,12 @@ function buildPayload(snap) {
       flightInfo.registration = document.getElementById('regInput').value.trim();
       
       const apiKey = document.getElementById('apiKeyInput').value.trim();
-      // API Key is required. If the user is a pilot in-game they MUST provide an API key (log into the website to get one)
-      if (!apiKey) {
-          if (geofs && geofs.userRecord && geofs.userRecord.id) {
-              return showToast('API Key required for pilots. Please log in on the website to obtain your API Key.');
-          }
-          return showToast('API Key is required. Obtain one from the website and paste it here.');
-      }
-
-      localStorage.setItem('geofs_flightradar_apikey', apiKey);
+        if (apiKey) {
+          localStorage.setItem('geofs_flightradar_apikey', apiKey);
+        } else {
+          localStorage.removeItem('geofs_flightradar_apikey');
+          showToast('Transponder active without API key (unlinked mode)');
+        }
       localStorage.setItem('geofs_radar_flightinfo', JSON.stringify(flightInfo));
       
       isTransponderActive = true;
@@ -1674,8 +1671,8 @@ function buildPayload(snap) {
     floatingBtn.title = 'AI Air Traffic Control';
     floatingBtn.style.cssText = `
       position: fixed;
-      bottom: 20px;
-      right: 20px;
+      bottom: 26px;
+      right: 86px;
       width: 60px;
       height: 60px;
       background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%);
@@ -1684,7 +1681,7 @@ function buildPayload(snap) {
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      z-index: 10000;
+      z-index: 2147483000;
       box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
       transition: all 0.3s;
       border: 2px solid rgba(255, 255, 255, 0.2);
@@ -1705,8 +1702,8 @@ function buildPayload(snap) {
     chatPanel.id = 'geofs-ai-atc-panel';
     chatPanel.style.cssText = `
       position: fixed;
-      bottom: 90px;
-      right: 20px;
+      bottom: 98px;
+      right: 24px;
       width: 380px;
       height: 500px;
       background: rgba(10, 17, 24, 0.98);
@@ -1716,7 +1713,7 @@ function buildPayload(snap) {
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
       display: none;
       flex-direction: column;
-      z-index: 10000;
+      z-index: 2147483000;
       overflow: hidden;
     `;
     
@@ -1898,7 +1895,7 @@ function buildPayload(snap) {
     
     const apiKey = localStorage.getItem('gemini_api_key');
     if (!apiKey) {
-      addAIMessage('Please set up your API key first. Visit the <a href="/ai-atc.html" target="_blank" style="color: #a855f7;">AI ATC page</a> to configure it.');
+      addAIMessage('Please set up your API key first. Visit the <a href="https://radar.yugp.me/ai-atc.html" target="_blank" style="color: #a855f7;">AI ATC page</a> to configure it.');
       return;
     }
     
