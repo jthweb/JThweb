@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.8.5
+// @version      4.8.8
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -26,10 +26,11 @@
   /*************/
 
     // ===== Modal Function =====
-  function showModal(msg, duration = null, updateBtnUrl = null) {
+  function showModal(msg, duration = null, updateBtnUrl = null, lockUntilUpdate = false) {
     if (document.getElementById("geofs-atc-modal")) return;
     let overlay = document.createElement("div");
     overlay.id = "geofs-atc-modal";
+    if (lockUntilUpdate) overlay.dataset.lockedUpdate = 'true';
     overlay.style.cssText = `
       position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99999;
       background:rgba(24,32,48,0.45);display:flex;align-items:center;justify-content:center;
@@ -65,6 +66,7 @@
       updateBtn.textContent = "Update Now";
       updateBtn.href = updateBtnUrl;
       updateBtn.target = "_blank";
+      updateBtn.rel = "noopener noreferrer";
       updateBtn.style.cssText = `
         margin-top: 10px;
         padding: 12px 32px;
@@ -83,46 +85,59 @@
       updateBtn.onmouseover = function(){this.style.transform="translateY(-2px)";this.style.boxShadow="0 6px 16px rgba(51, 154, 240, 0.4)";}
       updateBtn.onmouseout = function(){this.style.transform="translateY(0)";this.style.boxShadow="0 4px 12px rgba(51, 154, 240, 0.3)";}
       box.appendChild(updateBtn);
+
+      if (lockUntilUpdate) {
+        let hint = document.createElement('div');
+        hint.textContent = 'Update is required. This prompt will stay visible until you update.';
+        hint.style.cssText = 'font-size:12px;color:rgba(233,236,239,0.75);max-width:440px;line-height:1.5;';
+        box.appendChild(hint);
+      }
     }
 
-    let okBtn = document.createElement("button");
-    okBtn.textContent = "Got it";
-    okBtn.style.cssText = `
-      margin-top: 10px;
-      padding: 12px 40px;
-      font-size: 1rem;
-      background: rgba(255,255,255,0.1);
-      color: #fff;
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    `;
-    okBtn.onmouseover = function(){this.style.background="rgba(255,255,255,0.2)";}
-    okBtn.onmouseout = function(){this.style.background="rgba(255,255,255,0.1)";}
-    okBtn.onclick = () => { document.body.removeChild(overlay); };
-    box.appendChild(okBtn);
+    if (!lockUntilUpdate) {
+      let okBtn = document.createElement("button");
+      okBtn.textContent = "Got it";
+      okBtn.style.cssText = `
+        margin-top: 10px;
+        padding: 12px 40px;
+        font-size: 1rem;
+        background: rgba(255,255,255,0.1);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+      `;
+      okBtn.onmouseover = function(){this.style.background="rgba(255,255,255,0.2)";}
+      okBtn.onmouseout = function(){this.style.background="rgba(255,255,255,0.1)";}
+      okBtn.onclick = () => { document.body.removeChild(overlay); };
+      box.appendChild(okBtn);
+    }
     overlay.appendChild(box);
     document.body.appendChild(overlay);
 
-    if (duration) setTimeout(() => {
+    if (!lockUntilUpdate && duration) setTimeout(() => {
       if (document.body.contains(overlay)) document.body.removeChild(overlay);
     }, duration);
 
-    // Allow clicking outside the box to dismiss the modal
-    overlay.onclick = (e) => {
-      if (e.target === overlay) {
-        if (document.body.contains(overlay)) document.body.removeChild(overlay);
-      }
-    };
+    if (!lockUntilUpdate) {
+      // Allow clicking outside the box to dismiss the modal
+      overlay.onclick = (e) => {
+        if (e.target === overlay) {
+          if (document.body.contains(overlay)) document.body.removeChild(overlay);
+        }
+      };
+    }
 
     overlay.tabIndex = -1; overlay.focus();
-    overlay.onkeydown = (e) => {
-      if (e.key === "Enter" || e.key === "Escape") {
-        if (document.body.contains(overlay)) document.body.removeChild(overlay);
-      }
-    };
+    if (!lockUntilUpdate) {
+      overlay.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === "Escape") {
+          if (document.body.contains(overlay)) document.body.removeChild(overlay);
+        }
+      };
+    }
 
     if (!document.getElementById("geofs-atc-modal-anim")) {
       const style = document.createElement('style');
@@ -173,6 +188,158 @@
   let divertedTo = null;       // New destination if diverted
   let isDiverted = false;      // Whether a diversion occurred
   let flightStartedWithArrival = false; // Whether we had an arrival set at takeoff
+  let lastSyncedPlan = '';
+
+  function isICAOCode(value) {
+    return /^[A-Z]{4}$/.test(String(value || '').toUpperCase().trim());
+  }
+
+  function readExportedFlightPlan() {
+    try {
+      const gfp = geofs?.flightPlan;
+      if (!gfp) return [];
+      let raw = null;
+      if (typeof gfp.export === 'function') raw = gfp.export();
+      if (!raw) raw = gfp.plan || gfp.waypoints || gfp.route || [];
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (_) { raw = []; }
+      }
+      if (Array.isArray(raw)) return raw;
+      if (raw?.points && Array.isArray(raw.points)) return raw.points;
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function syncFlightPlanToUI() {
+    try {
+      const waypoints = readExportedFlightPlan();
+      if (!Array.isArray(waypoints) || waypoints.length < 2) return;
+
+      let depIdent = '';
+      let arrIdent = '';
+      for (const wp of waypoints) {
+        if (wp && wp.type === 'DPT' && wp.ident) depIdent = String(wp.ident).toUpperCase();
+        if (wp && wp.type === 'DST' && wp.ident) arrIdent = String(wp.ident).toUpperCase();
+      }
+      if (!depIdent) depIdent = String(waypoints[0]?.ident || '').toUpperCase();
+      if (!arrIdent) arrIdent = String(waypoints[waypoints.length - 1]?.ident || '').toUpperCase();
+
+      const planKey = `${depIdent}-${arrIdent}`;
+      if (!depIdent || !arrIdent || planKey === lastSyncedPlan) return;
+
+      const depEl = document.getElementById('depInput');
+      const arrEl = document.getElementById('arrInput');
+      let changed = false;
+
+      if (depEl && isICAOCode(depIdent) && !String(depEl.value || '').trim()) {
+        depEl.value = depIdent;
+        flightInfo.departure = depIdent;
+        changed = true;
+      }
+      if (arrEl && isICAOCode(arrIdent) && !String(arrEl.value || '').trim()) {
+        arrEl.value = arrIdent;
+        flightInfo.arrival = arrIdent;
+        changed = true;
+      }
+
+      if (changed) {
+        lastSyncedPlan = planKey;
+        try { localStorage.setItem('geofs_radar_flightinfo', JSON.stringify(flightInfo)); } catch (_) {}
+        try { refreshAirportTooltips(); } catch (_) {}
+        showToast('Flight plan detected');
+      }
+    } catch (_) {}
+  }
+
+  const IRL_WIND_TTL_MS = 3 * 60 * 1000;
+  const IRL_WIND_MIN_FETCH_MS = 45 * 1000;
+  const irlWindState = {
+    key: '',
+    ts: 0,
+    lastFetchTs: 0,
+    inFlight: false,
+    windSpeed: 0,
+    windDir: 0
+  };
+
+  function gridCoord(v) {
+    return Number((Math.round(Number(v) * 2) / 2).toFixed(1));
+  }
+
+  function getIrlWindKey(lat, lon) {
+    return `${gridCoord(lat)},${gridCoord(lon)}`;
+  }
+
+  function getIrlWind() {
+    return {
+      windSpeed: Number(irlWindState.windSpeed || 0),
+      windDir: Math.round(Number(irlWindState.windDir || 0))
+    };
+  }
+
+  async function fetchIrlWind(lat, lon) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lon))}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&timezone=UTC`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`wind http ${res.status}`);
+    const data = await res.json();
+    const speed = Number(data?.current?.wind_speed_10m);
+    const dir = Number(data?.current?.wind_direction_10m);
+    if (!Number.isFinite(speed) || !Number.isFinite(dir)) throw new Error('wind payload missing fields');
+    return {
+      windSpeed: Number(Math.max(0, speed).toFixed(1)),
+      windDir: ((Math.round(dir) % 360) + 360) % 360
+    };
+  }
+
+  function updateIrlWind(lat, lon, force = false) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const now = Date.now();
+    const key = getIrlWindKey(lat, lon);
+    const isFresh = irlWindState.key === key && (now - irlWindState.ts) < IRL_WIND_TTL_MS;
+    const tooSoon = (now - irlWindState.lastFetchTs) < IRL_WIND_MIN_FETCH_MS;
+    if (!force && (isFresh || tooSoon || irlWindState.inFlight)) return;
+
+    irlWindState.inFlight = true;
+    irlWindState.lastFetchTs = now;
+    fetchIrlWind(lat, lon)
+      .then((wind) => {
+        irlWindState.key = key;
+        irlWindState.ts = Date.now();
+        irlWindState.windSpeed = wind.windSpeed;
+        irlWindState.windDir = wind.windDir;
+      })
+      .catch((e) => console.warn('[ATC-Reporter] IRL wind fetch failed:', e?.message || e))
+      .finally(() => { irlWindState.inFlight = false; });
+  }
+
+  function emitAtcDataSync(detail = {}) {
+    try {
+      window.dispatchEvent(new CustomEvent('atc-data-sync', {
+        detail: { _origin: 'geofs-flightradar', ...detail }
+      }));
+    } catch (_) {}
+  }
+
+  function applyFlightInfoPatch(detail = {}) {
+    const map = [
+      ['departure', 'depInput'],
+      ['arrival', 'arrInput'],
+      ['flightNo', 'fltInput'],
+      ['squawk', 'sqkInput'],
+      ['registration', 'regInput']
+    ];
+    for (const [field, inputId] of map) {
+      if (!(field in detail)) continue;
+      const value = String(detail[field] || '').toUpperCase().trim();
+      flightInfo[field] = value;
+      const element = document.getElementById(inputId);
+      if (element) element.value = value;
+    }
+    try { localStorage.setItem('geofs_radar_flightinfo', JSON.stringify(flightInfo)); } catch (_) {}
+    try { refreshAirportTooltips(); } catch (_) {}
+  }
 
   // --- Airport Manager ---
   const AirportManager = {
@@ -224,7 +391,7 @@
   function cleanupOverlays() {
     try {
       const stray = document.getElementById('geofs-atc-modal');
-      if (stray && stray.parentElement) stray.parentElement.removeChild(stray);
+      if (stray && stray.parentElement && stray.dataset.lockedUpdate !== 'true') stray.parentElement.removeChild(stray);
     } catch (e) {}
 
     try {
@@ -235,6 +402,7 @@
           const isFixed = cs.position === 'fixed';
           const isFullscreen = (cs.top === '0px' && cs.left === '0px' && (cs.width === '100vw' || cs.width === '100%' || cs.width === window.innerWidth + 'px') && (cs.height === '100vh' || cs.height === '100%' || cs.height === window.innerHeight + 'px'));
           const z = parseInt(cs.zIndex || 0, 10) || 0;
+          if (el.id === 'geofs-atc-modal' && el.dataset.lockedUpdate === 'true') return;
           if (isFixed && isFullscreen && z >= 10000) {
             el.remove();
           }
@@ -555,7 +723,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.8.5';
+  const CURRENT_VERSION = '4.8.8';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -566,7 +734,8 @@
         showModal(
           `✈️ GeoFS FlightRadar receiver new version available (${data.version})!<br>Please reinstall the latest user.js from GitHub.`,
           null,
-          UPDATE_URL
+          UPDATE_URL,
+          true
         );
       }
     })
@@ -913,17 +1082,10 @@
         prevAltTs = now;
       }
 
-      // Wind Data
-      let windSpeed = 0;
-      let windDir = 0;
-      if (geofs?.animation?.values?.windSpeed) {
-          windSpeed = geofs.animation.values.windSpeed * 1.94384; // m/s to knots
-      }
-      if (geofs?.animation?.values?.windDir) {
-          windDir = geofs.animation.values.windDir;
-      }
+        updateIrlWind(lat, lon);
+        const wind = getIrlWind();
 
-      return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)), verticalSpeedFpm: vsFpm, windSpeed, windDir };
+        return { lat, lon, altMSL, altAGL, heading, speed: parseFloat(speed.toFixed(1)), verticalSpeedFpm: vsFpm, windSpeed: wind.windSpeed, windDir: wind.windDir };
     } catch (e) {
       console.warn('[ATC-Reporter] readSnapshot error:', e);
       return null;
@@ -941,8 +1103,7 @@ function buildPayload(snap) {
       console.log('[ATC-Reporter] Snapshot:', snap, 'FlightInfo:', flightInfo);
   }
   
-  const rawPlan = geofs.flightPlan?.export ? geofs.flightPlan.export() : (geofs.flightPlan?.plan || geofs.flightPlan?.waypoints || geofs.flightPlan?.route || []);
-  const flightPlan = Array.isArray(rawPlan) ? rawPlan : (rawPlan?.points && Array.isArray(rawPlan.points) ? rawPlan.points : []);
+  const flightPlan = readExportedFlightPlan();
   const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
   const userId = identity.geofsUserId;
 
@@ -965,7 +1126,9 @@ function buildPayload(snap) {
     squawk: flightInfo.squawk,
     flightPlan: flightPlan,
     nextWaypoint: nextWaypoint,
-    vspeed: Math.floor(geofs.animation?.values?.verticalSpeed || 0),
+    vspeed: Math.round(snap.verticalSpeedFpm || 0),
+    windSpeed: Number(snap.windSpeed || 0),
+    windDir: Number(snap.windDir || 0),
     actualDeparture: actualDeparture,
     actualArrival: actualArrival,
     registration: flightInfo.registration,
@@ -1020,6 +1183,8 @@ function buildPayload(snap) {
         heading: Math.round(baseSnap?.heading ?? 0),
         speed: Math.round(baseSnap?.speed ?? 0),
         vspeed: Math.round(baseSnap?.verticalSpeedFpm ?? 0),
+        windSpeed: Number(baseSnap?.windSpeed ?? 0),
+        windDir: Number(baseSnap?.windDir ?? 0),
         apiKey: identity.apiKey
       };
       safeSend({ type: 'position_update', payload });
@@ -1030,8 +1195,6 @@ function buildPayload(snap) {
   
   setInterval(() => {
     try {
-      if (!ws || ws.readyState !== 1) return;
-      
       if (!isTransponderActive) {
         // Send heartbeat every 10 seconds to keep connection alive
         if (Date.now() % 10000 < SEND_INTERVAL_MS) {
@@ -1047,6 +1210,7 @@ function buildPayload(snap) {
 
       const snap = readSnapshot();
       if (!snap) return;
+        updateIrlWind(snap.lat, snap.lon, true);
       
           const payload = buildPayload(snap);
       // include desired icon color/border so the server/client can use it if needed
@@ -1093,6 +1257,10 @@ function buildPayload(snap) {
       console.warn('[ATC-Reporter] Periodic send error:', e);
     }
   }, SEND_INTERVAL_MS);
+
+  setInterval(() => {
+    try { syncFlightPlanToUI(); } catch (_) {}
+  }, 3000);
 
   // --- Toast Notification ---
   function showToast(msg) {
@@ -1279,7 +1447,7 @@ function buildPayload(snap) {
                 <input id="regInput" class="geofs-radar-input" placeholder="REG" value="${flightInfo.registration}">
             </div>
             <div class="geofs-radar-group">
-                <label class="geofs-radar-label">Squawk</label>
+                <label class="geofs-radar-label">XPDR</label>
                 <input id="sqkInput" class="geofs-radar-input" placeholder="7000" maxlength="4" value="${flightInfo.squawk}">
             </div>
             <div class="geofs-radar-group" style="grid-column: span 2;">
@@ -1455,6 +1623,13 @@ function buildPayload(snap) {
 
       // Update details immediately
       try { updateDetails(); } catch (e) {}
+      emitAtcDataSync({
+        departure: flightInfo.departure,
+        arrival: flightInfo.arrival,
+        flightNo: flightInfo.flightNo,
+        squawk: flightInfo.squawk,
+        registration: flightInfo.registration
+      });
     };
     
     // Stop Transponder Button Handler
@@ -1463,6 +1638,13 @@ function buildPayload(snap) {
       localStorage.setItem('geofs_radar_transponder_active', 'false');
       updateStatusDot();
       try { clearFlightPlan(readSnapshot()); } catch (e) { console.warn('[ATC-Reporter] Failed to clear plan on stop:', e); }
+      emitAtcDataSync({
+        departure: '',
+        arrival: '',
+        flightNo: flightInfo.flightNo,
+        squawk: flightInfo.squawk,
+        registration: flightInfo.registration
+      });
       showToast('Transponder Stopped');
     };
 
@@ -1532,7 +1714,8 @@ function buildPayload(snap) {
       const out = {
         id: payload.id, callsign: payload.callsign, flightNo: payload.flightNo, type: payload.type, registration: payload.registration,
         lat: payload.lat, lon: payload.lon, alt: payload.alt, altMSL: payload.altMSL, heading: payload.heading, speed: payload.speed, vspeed: payload.vspeed,
-        squawk: payload.squawk, takeoffTime: payload.takeoffTime, flightPlanPoints: Array.isArray(payload.flightPlan) ? payload.flightPlan.length : 0, apiKey: payload.apiKey
+        xpdr: payload.squawk, takeoffTime: payload.takeoffTime, flightPlanPoints: Array.isArray(payload.flightPlan) ? payload.flightPlan.length : 0, apiKey: payload.apiKey,
+        windSpeed: payload.windSpeed, windDir: payload.windDir
       };
       detailsJson.textContent = JSON.stringify(out, null, 2);
       // Also update the mini Day/Night preview when details update
@@ -1608,6 +1791,12 @@ function buildPayload(snap) {
         showToast('Flight Info UI Hidden');
       }
     }
+  });
+
+  window.addEventListener('atc-data-sync', (event) => {
+    const detail = event?.detail || {};
+    if (detail._origin === 'geofs-flightradar') return;
+    applyFlightInfoPatch(detail);
   });
 
   // --- Disable Autocomplete for Inputs ---
@@ -1847,6 +2036,51 @@ function buildPayload(snap) {
   }
   
   let aiConversationHistory = [];
+
+  function getGeminiApiKey() {
+    return (
+      localStorage.getItem('gemini_api_key') ||
+      localStorage.getItem('geofs_gemini_api_key') ||
+      localStorage.getItem('ai_atc_gemini_api_key') ||
+      ''
+    ).trim();
+  }
+
+  async function requestGeminiATCReply(apiKey, contents, generationConfig) {
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    let lastErr = null;
+
+    for (const model of models) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            generationConfig
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const errMsg = data?.error?.message || `HTTP ${response.status}`;
+          lastErr = new Error(`${model}: ${errMsg}`);
+          continue;
+        }
+
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply && String(reply).trim()) {
+          return String(reply).trim();
+        }
+
+        lastErr = new Error(`${model}: empty response`);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    throw lastErr || new Error('No Gemini model available');
+  }
   
   function addAIMessage(text, sender = 'ATC', type = 'atc') {
     const messagesDiv = document.getElementById('ai-atc-messages');
@@ -1893,7 +2127,7 @@ function buildPayload(snap) {
     const text = input.value.trim();
     if (!text) return;
     
-    const apiKey = localStorage.getItem('gemini_api_key');
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       addAIMessage('Please set up your API key first. Visit the <a href="https://radar.yugp.me/ai-atc.html" target="_blank" style="color: #a855f7;">AI ATC page</a> to configure it.');
       return;
@@ -1911,29 +2145,20 @@ function buildPayload(snap) {
     aiConversationHistory.push({ role: 'user', parts: [{ text: prompt }] });
     
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: aiConversationHistory,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 200
-          }
-        })
-      });
-      
-      const data = await response.json();
-      if (data.candidates && data.candidates[0]) {
-        const reply = data.candidates[0].content.parts[0].text;
-        aiConversationHistory.push({ role: 'model', parts: [{ text: reply }] });
-        addAIMessage(reply);
-      } else {
-        throw new Error('Invalid response');
-      }
+      const reply = await requestGeminiATCReply(
+        apiKey,
+        aiConversationHistory,
+        {
+          temperature: 0.7,
+          maxOutputTokens: 220
+        }
+      );
+
+      aiConversationHistory.push({ role: 'model', parts: [{ text: reply }] });
+      addAIMessage(reply);
     } catch (e) {
       console.error('[AI ATC] Error:', e);
-      addAIMessage("Sorry, I'm having trouble receiving your transmission. Please check your API key and try again.");
+      addAIMessage("Sorry, I'm having trouble receiving your transmission. Please verify your Gemini API key and try again.");
     } finally {
       sendBtn.disabled = false;
       sendBtn.innerHTML = '➤';
@@ -1943,33 +2168,36 @@ function buildPayload(snap) {
   function buildFlightContext() {
     const lines = [];
     try {
-      if (typeof geofs !== 'undefined' && geofs.aircraft) {
-        const aircraft = geofs.aircraft;
-        const pos = aircraft.llaLocation;
+      if (typeof geofs !== 'undefined') {
+        const snap = readSnapshot();
+        const aircraft = geofs?.aircraft?.instance;
+        const onGround = geofs?.aircraft?.instance?.groundContact ?? null;
+        const callsign = flightInfo?.flightNo || geofs?.userRecord?.callsign || '';
         
-        if (geofs.userRecord && geofs.userRecord.callsign) {
-          lines.push(`Callsign: ${geofs.userRecord.callsign}`);
+        if (callsign) lines.push(`Callsign: ${callsign}`);
+        if (flightInfo?.departure) lines.push(`Departure: ${flightInfo.departure}`);
+        if (flightInfo?.arrival) lines.push(`Destination: ${flightInfo.arrival}`);
+        if (flightInfo?.squawk) lines.push(`XPDR: ${flightInfo.squawk}`);
+        
+        lines.push(`Aircraft: ${getAircraftName()}`);
+        
+        if (snap && Number.isFinite(snap.lat) && Number.isFinite(snap.lon)) {
+          lines.push(`Position: ${snap.lat.toFixed(2)}°, ${snap.lon.toFixed(2)}°`);
         }
         
-        if (aircraft.aircraftRecord && aircraft.aircraftRecord.name) {
-          lines.push(`Aircraft: ${aircraft.aircraftRecord.name}`);
-        }
+        if (snap && Number.isFinite(snap.altMSL)) lines.push(`Altitude: ${Math.round(snap.altMSL)} feet MSL`);
+        if (snap && Number.isFinite(snap.altAGL)) lines.push(`AGL: ${Math.round(snap.altAGL)} feet`);
+        if (snap && Number.isFinite(snap.speed)) lines.push(`Speed: ${Math.round(snap.speed)} knots`);
+        if (snap && Number.isFinite(snap.heading)) lines.push(`Heading: ${Math.round(snap.heading)}°`);
+        if (snap && Number.isFinite(snap.verticalSpeedFpm)) lines.push(`Vertical Speed: ${Math.round(snap.verticalSpeedFpm)} fpm`);
         
-        if (pos && pos[0] && pos[1]) {
-          lines.push(`Position: ${pos[0].toFixed(2)}°, ${pos[1].toFixed(2)}°`);
-        }
-        
-        if (aircraft.groundAltitude != null) {
-          const alt = Math.round(aircraft.groundAltitude * 3.28084); // m to ft
-          lines.push(`Altitude: ${alt} feet`);
-        }
-        
-        if (aircraft.kias != null) {
-          lines.push(`Speed: ${Math.round(aircraft.kias)} knots`);
-        }
-        
-        if (aircraft.hud && aircraft.hud.heading != null) {
-          lines.push(`Heading: ${Math.round(aircraft.hud.heading)}°`);
+        if (onGround === true) lines.push('Flight phase: On ground');
+        if (onGround === false) lines.push('Flight phase: Airborne');
+
+        const nearest = snap ? AirportManager.getNearest(snap.lat, snap.lon) : null;
+        if (nearest) {
+          const aptCode = nearest.icao || nearest.iata || nearest.name;
+          if (aptCode) lines.push(`Nearest airport: ${aptCode}`);
         }
       }
     } catch (e) {
