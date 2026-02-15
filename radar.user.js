@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      5.0.2
+// @version      5.0.3
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -171,7 +171,7 @@
   let prevAltMSL = null;
   let prevAltTs = null;
 
-  const INVALID_REGISTRATION_VALUES = new Set(['REG', 'REGISTRATION', 'UNKNOWN', 'N/A', 'NA', 'NONE', 'NULL', 'UNSET', 'TBD']);
+  const INVALID_REGISTRATION_VALUES = new Set(['REG', 'REGISTRATION', 'UNKNOWN', 'N/A', 'NA', 'NONE', 'NULL', 'UNSET', 'TBD', 'NOREG', 'TAIL', 'TAILNO', 'TAILNUM', 'TAILNUMBER']);
   const BOTLOGGER_PILOT_NAME_KEY = 'geofs_botlogger_pilot_name';
   const BOTLOGGER_DISCORD_ID_KEY = 'geofs_botlogger_discord_id';
   let botLoggerEnabled = true;
@@ -223,12 +223,15 @@
         ...extra
       };
 
-      await fetch(`${baseUrl}/api/botlogger/flight`, {
+      const response = await fetch(`${baseUrl}/api/botlogger/flight`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         keepalive: true
       });
+      if (!response.ok) {
+        console.warn('[ATC-Reporter] bot logger rejected event', eventType, response.status);
+      }
     } catch (e) {
       console.warn('[ATC-Reporter] bot logger event failed', e);
     }
@@ -792,7 +795,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '5.0.2';
+  const CURRENT_VERSION = '5.0.3';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1035,6 +1038,17 @@
   // --- Takeoff Detection ---
   function checkTakeoff(snap) {
     const onGround = geofs?.aircraft?.instance?.groundContact ?? true;
+    const lowAgl = Number.isFinite(snap?.altAGL) ? Number(snap.altAGL) : 0;
+    const speed = Number.isFinite(snap?.speed) ? Number(snap.speed) : 0;
+    const airborneLike = !onGround || lowAgl > 120 || (lowAgl > 30 && speed > 95);
+
+    // Arm landing logger even if transponder/script starts while already airborne.
+    if (airborneLike && !botLoggerFlightActive) {
+      botLoggerFlightActive = true;
+      if (!botLoggerFlightStartTs) botLoggerFlightStartTs = Date.now();
+      botLoggerTouchdownHits = 0;
+      botLoggerEndSent = false;
+    }
     
     // If we are already flying and haven't set a time, set it now (approximate)
     if (!onGround && !takeoffTimeUTC) {
@@ -1767,7 +1781,7 @@ function buildPayload(snap) {
       showToast('Transponder Stopped');
     };
 
-    // Landed Button Handler - send manual land message to server
+    // Landed Button Handler - mark landed WITHOUT stopping tracking
     document.getElementById('landedBtn').onclick = () => {
       const snap = readSnapshot();
       if (!snap) return showToast('Unable to capture position');
@@ -1778,7 +1792,7 @@ function buildPayload(snap) {
         botLoggerFlightStartTs = 0;
       }
       const identity = getActivePilotIdentity();
-      safeSend({ type: 'manual_land', payload: {
+      safeSend({ type: 'manual_landed_flag', payload: {
         id: identity.stablePilotId,
         callsign: identity.flightCallsign,
         lat: snap.lat,
@@ -1788,21 +1802,15 @@ function buildPayload(snap) {
         googleId: identity.googleId,
         username: identity.displayName,
         apiKey: identity.apiKey,
-        ts: Date.now()
+        ts: Date.now(),
+        arrival: flightInfo.arrival || '',
+        departure: flightInfo.departure || '',
+        flightNo: flightInfo.flightNo || '',
+        registration: normalizeRegistrationInput(flightInfo.registration)
       }});
-      try { clearFlightPlan(snap); } catch (e) { console.warn('[ATC-Reporter] Failed to clear plan on manual land:', e); }
-      // Reset state so the next flight can start cleanly
-      FlightLogger.flightStarted = false;
-      FlightLogger.firstGroundContact = false;
-      FlightLogger.justLanded = true;
-      FlightLogger.teleportWarnings = 0;
-      FlightLogger.teleportCooloffUntil = 0;
-      FlightLogger.lastPosition = null;
-      FlightLogger.lastPositionTime = null;
-      isTransponderActive = false;
-      localStorage.setItem('geofs_radar_transponder_active', 'false');
-      updateStatusDot();
-      showToast('Marked as Landed — flight ended. Update Transponder to start again.');
+      // Keep tracking active: landing is just a status flag; Stop button is the only thing that stops tracking.
+      try { FlightLogger.justLanded = true; } catch (_) {}
+      showToast('Marked as Landed — tracking continues (press Stop to stop).');
       try { updateDetails(); } catch(e) {}
     };
 
