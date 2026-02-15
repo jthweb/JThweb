@@ -24,9 +24,7 @@
   // Track which airline codes we've prefetched in this session
   const prefetchedLogos = new Set();
 
-  // Optional runtime settings (toggle via localStorage)
-  // - Set `geofs_radar_hide_atc_button` = 'true' to hide the in-game AI ATC floating button
-  // Example: `localStorage.setItem('geofs_radar_hide_atc_button', 'true')`
+  // runtime settings (localStorage)
   const HIDE_IN_GAME_ATC_BUTTON = localStorage.getItem('geofs_radar_hide_atc_button') === 'true';
   /*************/
 
@@ -1221,7 +1219,7 @@ function buildPayload(snap) {
       // include desired icon color/border so the server/client can use it if needed
       try { payload.iconColor = ATC_ICON_COLOR; payload.iconBorder = ATC_ICON_BORDER; } catch(e){}
       
-      // Optimize: Only send flight plan if it changed
+      // only send flight plan if changed
       const currentPlanHash = JSON.stringify(payload.flightPlan);
       if (currentPlanHash === lastFlightPlanHash) {
           delete payload.flightPlan;
@@ -1236,7 +1234,7 @@ function buildPayload(snap) {
       try {
         const ssePayload = { ...payload, flightInfo: { ...flightInfo }, ts: Date.now() };
         const body = JSON.stringify(ssePayload);
-        // Prefer sendBeacon for reliability on unload when available
+        // use navigator.sendBeacon if available
         if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
           try {
             const blob = new Blob([body], { type: 'application/json' });
@@ -1256,7 +1254,7 @@ function buildPayload(snap) {
         safeSendRadarthing(wsPayload);
       } catch (e) { console.warn('[ATC-Reporter] RadarThing WS error', e); }
 
-      // Prefetch corresponding airline logo once per code per session
+      // prefetch airline logo (once/session)
       try { prefetchLogoForCallsign(payload.callsign || payload.flightNo || getPlayerCallsign()); } catch (e) {}
     } catch (e) {
       console.warn('[ATC-Reporter] Periodic send error:', e);
@@ -1832,7 +1830,7 @@ function buildPayload(snap) {
     try {
         const originalReceive = geofs.chat.receive;
         geofs.chat.receive = function(id, name, text) {
-            // Forward to Radar Server
+            // forward chat to radar server
             if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
                 // Clean the text if needed (sometimes contains HTML)
                 const cleanText = text.replace(/<[^>]*>?/gm, '');
@@ -1848,17 +1846,17 @@ function buildPayload(snap) {
     }
   }
 
-  // Delay initialization to ensure GeoFS UI is loaded
+  // delay init until GeoFS UI ready
   setTimeout(initChatScraper, 8000);
 
   // --- AI ATC Chat Box (In-Game) ---
   function createAIATCChatBox() {
     console.log('[ATC-Reporter] Creating AI ATC Chat Box...');
     
-    // Check if already exists
+    // return if exists
     if (document.getElementById('geofs-ai-atc-panel')) return;
     
-    // Create floating button (optional — can be hidden via localStorage: geofs_radar_hide_atc_button = 'true')
+    // floating ATC button (hide via localStorage)
     if (!HIDE_IN_GAME_ATC_BUTTON) {
       const floatingBtn = document.createElement('div');
       floatingBtn.id = 'geofs-ai-atc-button';
@@ -1895,7 +1893,7 @@ function buildPayload(snap) {
       console.log('[ATC-Reporter] AI ATC floating button hidden by localStorage setting geofs_radar_hide_atc_button=true');
     }
     
-    // Create chat panel
+    // chat panel
     const chatPanel = document.createElement('div');
     chatPanel.id = 'geofs-ai-atc-panel';
     chatPanel.style.cssText = `
@@ -1915,7 +1913,7 @@ function buildPayload(snap) {
       overflow: hidden;
     `;
     
-    // Header
+    // header
     const header = document.createElement('div');
     header.style.cssText = `
       padding: 16px;
@@ -1945,7 +1943,7 @@ function buildPayload(snap) {
       ">×</button>
     `;
     
-    // Messages area
+    // messages
     const messagesArea = document.createElement('div');
     messagesArea.id = 'ai-atc-messages';
     messagesArea.style.cssText = `
@@ -1957,7 +1955,7 @@ function buildPayload(snap) {
       gap: 12px;
     `;
     
-    // Input area
+    // input
     const inputArea = document.createElement('div');
     inputArea.style.cssText = `
       padding: 12px;
@@ -2011,7 +2009,7 @@ function buildPayload(snap) {
     chatPanel.appendChild(messagesArea);
     chatPanel.appendChild(inputArea);
     
-    // Append UI elements. Floating button is optional.
+    // append UI (button optional)
     if (!HIDE_IN_GAME_ATC_BUTTON) {
       document.body.appendChild(floatingBtn);
       // Event handlers for floating button
@@ -2040,7 +2038,7 @@ function buildPayload(snap) {
       };
     }
 
-    // Always append the chat panel itself (button may be hidden)
+    // always append chat panel
     document.body.appendChild(chatPanel);
 
     document.getElementById('ai-atc-close').onclick = function() {
@@ -2066,8 +2064,7 @@ function buildPayload(snap) {
     ).trim();
   }
 
-  // Try to retrieve the Gemini API key stored on the radar site (cross-origin) using a hidden iframe + postMessage.
-  // This lets the in-game userscript read the key the user saved on radar.yugp.me/ai-atc.html.
+  // get Gemini key from radar site via hidden iframe (postMessage)
   async function fetchGeminiApiKeyFromRadarSite(timeoutMs = 1200) {
     try {
       const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
@@ -2082,7 +2079,7 @@ function buildPayload(snap) {
         document.body.appendChild(iframe);
       }
 
-      // Ensure iframe is loaded before messaging
+      // wait for iframe load
       await new Promise((resolve) => {
         if (iframe.contentWindow && iframe.contentDocument && iframe.contentDocument.readyState === 'complete') return resolve();
         const onLoad = () => { iframe.removeEventListener('load', onLoad); resolve(); };
@@ -2197,7 +2194,7 @@ function buildPayload(snap) {
     const text = input.value.trim();
     if (!text) return;
     
-    // Prefer local key, but fall back to the key stored on the radar site (cross-origin) if present
+    // prefer local key; fall back to radar site
     let apiKey = getGeminiApiKey();
     if (!apiKey) {
       try { apiKey = await fetchGeminiApiKeyFromRadarSite(); } catch (e) { apiKey = ''; }
@@ -2281,7 +2278,7 @@ function buildPayload(snap) {
     return lines.length > 0 ? lines.join('\\n') : 'Position unknown';
   }
   
-  // Initialize AI ATC Chat Box after GeoFS loads
+  // init AI ATC after load
   setTimeout(createAIATCChatBox, 10000);
 
 })();
