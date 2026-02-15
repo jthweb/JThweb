@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.9.0
+// @version      5.0.0
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -172,6 +172,12 @@
   let prevAltTs = null;
 
   const INVALID_REGISTRATION_VALUES = new Set(['REG', 'REGISTRATION', 'UNKNOWN', 'N/A', 'NA', 'NONE', 'NULL', 'UNSET', 'TBD']);
+  const BOTLOGGER_PILOT_NAME_KEY = 'geofs_botlogger_pilot_name';
+  const BOTLOGGER_DISCORD_ID_KEY = 'geofs_botlogger_discord_id';
+  let botLoggerEnabled = true;
+  let botLoggerFlightActive = false;
+  let botLoggerFlightStartTs = 0;
+
   function normalizeRegistrationInput(value) {
     const upper = String(value || '').toUpperCase().trim();
     if (!upper) return '';
@@ -180,6 +186,50 @@
     const cleaned = compact.replace(/[^A-Z0-9-]/g, '');
     if (!cleaned || INVALID_REGISTRATION_VALUES.has(cleaned)) return '';
     return cleaned;
+  }
+
+  function getRadarHttpBaseUrl() {
+    return WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+  }
+
+  async function sendBotLoggerEvent(eventType, snap, extra = {}) {
+    try {
+      if (!botLoggerEnabled) return;
+      if (!snap || !Number.isFinite(snap.lat) || !Number.isFinite(snap.lon)) return;
+      const baseUrl = getRadarHttpBaseUrl();
+      const apiKey = localStorage.getItem('geofs_flightradar_apikey') || '';
+      const pilotName = (localStorage.getItem(BOTLOGGER_PILOT_NAME_KEY) || geofs?.userRecord?.callsign || '').trim();
+      const discordId = (localStorage.getItem(BOTLOGGER_DISCORD_ID_KEY) || '').trim();
+
+      const payload = {
+        eventType,
+        apiKey,
+        discordId,
+        pilotName,
+        callsign: flightInfo.flightNo || geofs?.userRecord?.callsign || 'Unknown',
+        flightNo: flightInfo.flightNo || '',
+        aircraft: getAircraftName(),
+        registration: normalizeRegistrationInput(flightInfo.registration),
+        departure: flightInfo.departure || '',
+        arrival: flightInfo.arrival || '',
+        lat: snap.lat,
+        lon: snap.lon,
+        altitude: snap.altMSL || 0,
+        speed: snap.speed || 0,
+        heading: snap.heading || 0,
+        vspeed: snap.verticalSpeedFpm || 0,
+        ...extra
+      };
+
+      await fetch(`${baseUrl}/api/botlogger/flight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      });
+    } catch (e) {
+      console.warn('[ATC-Reporter] bot logger event failed', e);
+    }
   }
   
   // Load saved flight info
@@ -740,7 +790,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.9.0';
+  const CURRENT_VERSION = '5.0.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -992,6 +1042,9 @@
     if (wasOnGround && !onGround) {
       takeoffTimeUTC = new Date().toISOString();
       console.log('[ATC-Reporter] Takeoff at', takeoffTimeUTC);
+      botLoggerFlightActive = true;
+      botLoggerFlightStartTs = Date.now();
+      try { sendBotLoggerEvent('start', snap || readSnapshot()); } catch (_) {}
       
       if (snap) {
           const apt = AirportManager.getNearest(snap.lat, snap.lon);
@@ -1011,6 +1064,13 @@
     }
 
     if (!wasOnGround && onGround) {
+        if (botLoggerFlightActive) {
+          const endSnap = snap || readSnapshot();
+          const durationMinutes = botLoggerFlightStartTs ? Math.max(0, Math.round((Date.now() - botLoggerFlightStartTs) / 60000)) : 0;
+          try { sendBotLoggerEvent('end', endSnap, { durationMinutes }); } catch (_) {}
+        }
+        botLoggerFlightActive = false;
+        botLoggerFlightStartTs = 0;
         if (snap) {
             const apt = AirportManager.getNearest(snap.lat, snap.lon);
             if (apt) {
@@ -1111,7 +1171,7 @@
 
   // --- Build Payload ---
 function buildPayload(snap) {
-  checkTakeoff();
+  checkTakeoff(snap);
   checkDiversion();  // Check if destination changed during flight
   const identity = getActivePilotIdentity();
   
@@ -1473,6 +1533,14 @@ function buildPayload(snap) {
                 <label class="geofs-radar-label">API Key (Required)</label>
                 <input id="apiKeyInput" class="geofs-radar-input" placeholder="Paste Key from Radar Website (required)" value="${localStorage.getItem('geofs_flightradar_apikey') || ''}" style="font-size: 11px;">
             </div>
+            <div class="geofs-radar-group">
+              <label class="geofs-radar-label">Pilot</label>
+              <input id="pilotNameInput" class="geofs-radar-input" placeholder="Pilot" value="${localStorage.getItem('geofs_botlogger_pilot_name') || ''}">
+            </div>
+            <div class="geofs-radar-group">
+              <label class="geofs-radar-label">Discord ID</label>
+              <input id="discordIdInput" class="geofs-radar-input" placeholder="123456789" value="${localStorage.getItem('geofs_botlogger_discord_id') || ''}">
+            </div>
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
                 <button id="saveBtn" class="geofs-radar-btn" style="flex:1;min-width:160px;">Update Transponder</button>
@@ -1623,6 +1691,10 @@ function buildPayload(snap) {
       document.getElementById('regInput').value = flightInfo.registration;
       
       const apiKey = document.getElementById('apiKeyInput').value.trim();
+      const pilotName = (document.getElementById('pilotNameInput')?.value || '').trim();
+      const discordId = (document.getElementById('discordIdInput')?.value || '').trim();
+      localStorage.setItem(BOTLOGGER_PILOT_NAME_KEY, pilotName);
+      localStorage.setItem(BOTLOGGER_DISCORD_ID_KEY, discordId);
         if (apiKey) {
           localStorage.setItem('geofs_flightradar_apikey', apiKey);
         } else {
@@ -1651,7 +1723,7 @@ function buildPayload(snap) {
         registration: normalizeRegistrationInput(flightInfo.registration)
       });
     };
-    
+
     // Stop Transponder Button Handler
     document.getElementById('stopBtn').onclick = () => {
       isTransponderActive = false;
@@ -1672,6 +1744,12 @@ function buildPayload(snap) {
     document.getElementById('landedBtn').onclick = () => {
       const snap = readSnapshot();
       if (!snap) return showToast('Unable to capture position');
+      if (botLoggerFlightActive) {
+        const durationMinutes = botLoggerFlightStartTs ? Math.max(0, Math.round((Date.now() - botLoggerFlightStartTs) / 60000)) : 0;
+        try { sendBotLoggerEvent('end', snap, { durationMinutes, reason: 'Manual landed button' }); } catch (_) {}
+        botLoggerFlightActive = false;
+        botLoggerFlightStartTs = 0;
+      }
       const identity = getActivePilotIdentity();
       safeSend({ type: 'manual_land', payload: {
         id: identity.stablePilotId,
