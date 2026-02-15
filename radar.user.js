@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      5.0.0
+// @version      5.0.2
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -177,6 +177,8 @@
   let botLoggerEnabled = true;
   let botLoggerFlightActive = false;
   let botLoggerFlightStartTs = 0;
+  let botLoggerTouchdownHits = 0;
+  let botLoggerEndSent = false;
 
   function normalizeRegistrationInput(value) {
     const upper = String(value || '').toUpperCase().trim();
@@ -790,7 +792,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '5.0.0';
+  const CURRENT_VERSION = '5.0.2';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1044,7 +1046,8 @@
       console.log('[ATC-Reporter] Takeoff at', takeoffTimeUTC);
       botLoggerFlightActive = true;
       botLoggerFlightStartTs = Date.now();
-      try { sendBotLoggerEvent('start', snap || readSnapshot()); } catch (_) {}
+      botLoggerTouchdownHits = 0;
+      botLoggerEndSent = false;
       
       if (snap) {
           const apt = AirportManager.getNearest(snap.lat, snap.lon);
@@ -1064,13 +1067,15 @@
     }
 
     if (!wasOnGround && onGround) {
-        if (botLoggerFlightActive) {
+        if (botLoggerFlightActive && !botLoggerEndSent) {
           const endSnap = snap || readSnapshot();
           const durationMinutes = botLoggerFlightStartTs ? Math.max(0, Math.round((Date.now() - botLoggerFlightStartTs) / 60000)) : 0;
           try { sendBotLoggerEvent('end', endSnap, { durationMinutes }); } catch (_) {}
+          botLoggerEndSent = true;
         }
         botLoggerFlightActive = false;
         botLoggerFlightStartTs = 0;
+        botLoggerTouchdownHits = 0;
         if (snap) {
             const apt = AirportManager.getNearest(snap.lat, snap.lon);
             if (apt) {
@@ -1305,6 +1310,28 @@ function buildPayload(snap) {
       
       try { console.log('[ATC-Reporter] Sending position_update', { callsign: payload.callsign, type: payload.type, iconColor: payload.iconColor }); } catch(e){}
       safeSend({ type: 'position_update', payload });
+
+      // Bot logger touchdown fallback: end log after stable ground-touch samples
+      try {
+        if (botLoggerFlightActive && !botLoggerEndSent) {
+          const onGround = geofs?.aircraft?.instance?.groundContact ?? false;
+          const lowAgl = Number.isFinite(snap.altAGL) ? snap.altAGL <= 40 : false;
+          const lowSpeed = Number.isFinite(snap.speed) ? snap.speed <= 70 : false;
+          if (onGround || (lowAgl && lowSpeed)) {
+            botLoggerTouchdownHits += 1;
+          } else {
+            botLoggerTouchdownHits = 0;
+          }
+
+          if (botLoggerTouchdownHits >= 3) {
+            const durationMinutes = botLoggerFlightStartTs ? Math.max(0, Math.round((Date.now() - botLoggerFlightStartTs) / 60000)) : 0;
+            try { sendBotLoggerEvent('end', snap, { durationMinutes, reason: 'Touchdown detected' }); } catch (_) {}
+            botLoggerEndSent = true;
+            botLoggerFlightActive = false;
+            botLoggerTouchdownHits = 0;
+          }
+        }
+      } catch (_) {}
 
       // Also send full details to external SSE endpoint (non-blocking)
       try {
