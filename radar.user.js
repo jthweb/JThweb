@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.8.8
+// @version      4.8.9
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -23,6 +23,11 @@
   const SEND_INTERVAL_MS = 1000;
   // Track which airline codes we've prefetched in this session
   const prefetchedLogos = new Set();
+
+  // Optional runtime settings (toggle via localStorage)
+  // - Set `geofs_radar_hide_atc_button` = 'true' to hide the in-game AI ATC floating button
+  // Example: `localStorage.setItem('geofs_radar_hide_atc_button', 'true')`
+  const HIDE_IN_GAME_ATC_BUTTON = localStorage.getItem('geofs_radar_hide_atc_button') === 'true';
   /*************/
 
     // ===== Modal Function =====
@@ -723,7 +728,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.8.8';
+  const CURRENT_VERSION = '4.8.9';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1853,38 +1858,42 @@ function buildPayload(snap) {
     // Check if already exists
     if (document.getElementById('geofs-ai-atc-panel')) return;
     
-    // Create floating button
-    const floatingBtn = document.createElement('div');
-    floatingBtn.id = 'geofs-ai-atc-button';
-    floatingBtn.innerHTML = '<i style="font-size: 20px;">🛩️</i>';
-    floatingBtn.title = 'AI Air Traffic Control';
-    floatingBtn.style.cssText = `
-      position: fixed;
-      bottom: 26px;
-      right: 86px;
-      width: 60px;
-      height: 60px;
-      background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      z-index: 2147483000;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
-      transition: all 0.3s;
-      border: 2px solid rgba(255, 255, 255, 0.2);
-    `;
-    
-    floatingBtn.onmouseenter = function() {
-      this.style.transform = 'scale(1.1)';
-      this.style.boxShadow = '0 6px 20px rgba(168, 85, 247, 0.6)';
-    };
-    
-    floatingBtn.onmouseleave = function() {
-      this.style.transform = 'scale(1)';
-      this.style.boxShadow = '0 4px 12px rgba(168, 85, 247, 0.4)';
-    };
+    // Create floating button (optional — can be hidden via localStorage: geofs_radar_hide_atc_button = 'true')
+    if (!HIDE_IN_GAME_ATC_BUTTON) {
+      const floatingBtn = document.createElement('div');
+      floatingBtn.id = 'geofs-ai-atc-button';
+      floatingBtn.innerHTML = '<i style="font-size: 20px;">🛩️</i>';
+      floatingBtn.title = 'AI Air Traffic Control';
+      floatingBtn.style.cssText = `
+        position: fixed;
+        bottom: 26px;
+        right: 86px;
+        width: 60px;
+        height: 60px;
+        background: linear-gradient(135deg, #a855f7 0%, #8b5cf6 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 2147483000;
+        box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
+        transition: all 0.3s;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+      `;
+      
+      floatingBtn.onmouseenter = function() {
+        this.style.transform = 'scale(1.1)';
+        this.style.boxShadow = '0 6px 20px rgba(168, 85, 247, 0.6)';
+      };
+      
+      floatingBtn.onmouseleave = function() {
+        this.style.transform = 'scale(1)';
+        this.style.boxShadow = '0 4px 12px rgba(168, 85, 247, 0.4)';
+      };
+    } else {
+      console.log('[ATC-Reporter] AI ATC floating button hidden by localStorage setting geofs_radar_hide_atc_button=true');
+    }
     
     // Create chat panel
     const chatPanel = document.createElement('div');
@@ -2002,27 +2011,38 @@ function buildPayload(snap) {
     chatPanel.appendChild(messagesArea);
     chatPanel.appendChild(inputArea);
     
-    document.body.appendChild(floatingBtn);
-    document.body.appendChild(chatPanel);
-    
-    // Event handlers
-    floatingBtn.onclick = function() {
-      const panel = document.getElementById('geofs-ai-atc-panel');
-      if (panel.style.display === 'none' || !panel.style.display) {
-        panel.style.display = 'flex';
-        // Check if API key is set
-        if (!localStorage.getItem('gemini_api_key')) {
-          addAIMessage('Welcome to AI ATC! To get started, you need to set up your Gemini API key. Get one for free at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #a855f7;">Google AI Studio</a> and set it in the AI ATC page.');
-        } else {
-          if (document.getElementById('ai-atc-messages').children.length === 0) {
-            addAIMessage('Good day! This is approach control. State your callsign and intentions.');
+    // Append UI elements. Floating button is optional.
+    if (!HIDE_IN_GAME_ATC_BUTTON) {
+      document.body.appendChild(floatingBtn);
+      // Event handlers for floating button
+      floatingBtn.onclick = async function() {
+        const panel = document.getElementById('geofs-ai-atc-panel');
+        if (panel.style.display === 'none' || !panel.style.display) {
+          panel.style.display = 'flex';
+          // Check if API key is set locally or on the radar site
+          if (!getGeminiApiKey()) {
+            const remoteKey = await fetchGeminiApiKeyFromRadarSite();
+            if (remoteKey) {
+              if (document.getElementById('ai-atc-messages').children.length === 0) {
+                addAIMessage('Good day! This is approach control. State your callsign and intentions.');
+              }
+              return;
+            }
+            addAIMessage('Welcome to AI ATC! To get started, you need to set up your Gemini API key. Get one for free at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #a855f7;">Google AI Studio</a> and set it in the AI ATC page.');
+          } else {
+            if (document.getElementById('ai-atc-messages').children.length === 0) {
+              addAIMessage('Good day! This is approach control. State your callsign and intentions.');
+            }
           }
+        } else {
+          panel.style.display = 'none';
         }
-      } else {
-        panel.style.display = 'none';
-      }
-    };
-    
+      };
+    }
+
+    // Always append the chat panel itself (button may be hidden)
+    document.body.appendChild(chatPanel);
+
     document.getElementById('ai-atc-close').onclick = function() {
       document.getElementById('geofs-ai-atc-panel').style.display = 'none';
     };
@@ -2046,8 +2066,58 @@ function buildPayload(snap) {
     ).trim();
   }
 
+  // Try to retrieve the Gemini API key stored on the radar site (cross-origin) using a hidden iframe + postMessage.
+  // This lets the in-game userscript read the key the user saved on radar.yugp.me/ai-atc.html.
+  async function fetchGeminiApiKeyFromRadarSite(timeoutMs = 1200) {
+    try {
+      const httpUrl = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+      const allowedOrigin = new URL(httpUrl).origin;
+      const iframeId = 'geofs-ai-atc-key-iframe';
+      let iframe = document.getElementById(iframeId);
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = iframeId;
+        iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
+        iframe.src = `${httpUrl}/ai-atc.html`;
+        document.body.appendChild(iframe);
+      }
+
+      // Ensure iframe is loaded before messaging
+      await new Promise((resolve) => {
+        if (iframe.contentWindow && iframe.contentDocument && iframe.contentDocument.readyState === 'complete') return resolve();
+        const onLoad = () => { iframe.removeEventListener('load', onLoad); resolve(); };
+        iframe.addEventListener('load', onLoad);
+        // If already loaded, fallback resolve shortly
+        setTimeout(resolve, 500);
+      });
+
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => { window.removeEventListener('message', onMessage); resolve(''); }, timeoutMs);
+        function onMessage(event) {
+          if (event.origin !== allowedOrigin) return;
+          const d = event.data || {};
+          if (d && d.type === 'gf_gemini_key_response') {
+            clearTimeout(timer);
+            window.removeEventListener('message', onMessage);
+            resolve(String(d.key || '').trim());
+          }
+        }
+        window.addEventListener('message', onMessage);
+        try {
+          iframe.contentWindow.postMessage({ type: 'gf_get_gemini_key' }, allowedOrigin);
+        } catch (e) {
+          clearTimeout(timer);
+          window.removeEventListener('message', onMessage);
+          resolve('');
+        }
+      });
+    } catch (e) {
+      return '';
+    }
+  }
+
   async function requestGeminiATCReply(apiKey, contents, generationConfig) {
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
     let lastErr = null;
 
     for (const model of models) {
@@ -2127,12 +2197,17 @@ function buildPayload(snap) {
     const text = input.value.trim();
     if (!text) return;
     
-    const apiKey = getGeminiApiKey();
+    // Prefer local key, but fall back to the key stored on the radar site (cross-origin) if present
+    let apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      try { apiKey = await fetchGeminiApiKeyFromRadarSite(); } catch (e) { apiKey = ''; }
+    }
+
     if (!apiKey) {
       addAIMessage('Please set up your API key first. Visit the <a href="https://radar.yugp.me/ai-atc.html" target="_blank" style="color: #a855f7;">AI ATC page</a> to configure it.');
       return;
     }
-    
+
     input.value = '';
     addAIMessage(text, 'You', 'user');
     sendBtn.disabled = true;
