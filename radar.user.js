@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      4.8.9
+// @version      4.9.0
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -170,13 +170,25 @@
   let isTransponderActive = localStorage.getItem('geofs_radar_transponder_active') === 'true';
   let prevAltMSL = null;
   let prevAltTs = null;
+
+  const INVALID_REGISTRATION_VALUES = new Set(['REG', 'REGISTRATION', 'UNKNOWN', 'N/A', 'NA', 'NONE', 'NULL', 'UNSET', 'TBD']);
+  function normalizeRegistrationInput(value) {
+    const upper = String(value || '').toUpperCase().trim();
+    if (!upper) return '';
+    const compact = upper.replace(/\s+/g, '');
+    if (INVALID_REGISTRATION_VALUES.has(compact)) return '';
+    const cleaned = compact.replace(/[^A-Z0-9-]/g, '');
+    if (!cleaned || INVALID_REGISTRATION_VALUES.has(cleaned)) return '';
+    return cleaned;
+  }
   
   // Load saved flight info
   try {
       const saved = localStorage.getItem('geofs_radar_flightinfo');
       if (saved) {
           const parsed = JSON.parse(saved);
-          flightInfo = { ...flightInfo, ...parsed };
+        flightInfo = { ...flightInfo, ...parsed };
+        flightInfo.registration = normalizeRegistrationInput(flightInfo.registration);
       }
   } catch(e) {}
 
@@ -335,7 +347,9 @@
     ];
     for (const [field, inputId] of map) {
       if (!(field in detail)) continue;
-      const value = String(detail[field] || '').toUpperCase().trim();
+      const value = field === 'registration'
+        ? normalizeRegistrationInput(detail[field])
+        : String(detail[field] || '').toUpperCase().trim();
       flightInfo[field] = value;
       const element = document.getElementById(inputId);
       if (element) element.value = value;
@@ -726,7 +740,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '4.8.9';
+  const CURRENT_VERSION = '4.9.0';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1109,6 +1123,7 @@ function buildPayload(snap) {
   const flightPlan = readExportedFlightPlan();
   const nextWaypoint = geofs.flightPlan?.trackedWaypoint?.ident || null;
   const userId = identity.geofsUserId;
+  const registration = normalizeRegistrationInput(flightInfo.registration);
 
   return {
     id: identity.stablePilotId,
@@ -1134,7 +1149,7 @@ function buildPayload(snap) {
     windDir: Number(snap.windDir || 0),
     actualDeparture: actualDeparture,
     actualArrival: actualArrival,
-    registration: flightInfo.registration,
+    registration,
     userId: userId,
     playerId: userId,
     apiKey: identity.apiKey,
@@ -1166,6 +1181,7 @@ function buildPayload(snap) {
 
     try {
       const baseSnap = snap || readSnapshot();
+      const registration = normalizeRegistrationInput(flightInfo.registration);
       const payload = {
         id: identity.stablePilotId,
         googleId: identity.googleId,
@@ -1176,7 +1192,7 @@ function buildPayload(snap) {
         flightNo: flightInfo.flightNo,
         departure: flightInfo.departure,
         arrival: flightInfo.arrival,
-        registration: flightInfo.registration,
+        registration,
         flightPlan: [],
         nextWaypoint: null,
         lat: baseSnap?.lat ?? null,
@@ -1603,7 +1619,8 @@ function buildPayload(snap) {
       flightInfo.arrival = document.getElementById('arrInput').value.trim();
       flightInfo.flightNo = document.getElementById('fltInput').value.trim();
       flightInfo.squawk = document.getElementById('sqkInput').value.trim();
-      flightInfo.registration = document.getElementById('regInput').value.trim();
+      flightInfo.registration = normalizeRegistrationInput(document.getElementById('regInput').value);
+      document.getElementById('regInput').value = flightInfo.registration;
       
       const apiKey = document.getElementById('apiKeyInput').value.trim();
         if (apiKey) {
@@ -1631,7 +1648,7 @@ function buildPayload(snap) {
         arrival: flightInfo.arrival,
         flightNo: flightInfo.flightNo,
         squawk: flightInfo.squawk,
-        registration: flightInfo.registration
+        registration: normalizeRegistrationInput(flightInfo.registration)
       });
     };
     
@@ -1646,7 +1663,7 @@ function buildPayload(snap) {
         arrival: '',
         flightNo: flightInfo.flightNo,
         squawk: flightInfo.squawk,
-        registration: flightInfo.registration
+        registration: normalizeRegistrationInput(flightInfo.registration)
       });
       showToast('Transponder Stopped');
     };
