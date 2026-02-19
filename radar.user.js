@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GeoFS Flightradar
 // @namespace    http://tampermonkey.net/
-// @version      5.0.3
+// @version      5.0.4
 // @description  Transmits GeoFS flight data to the radar server (now with AI ATC chat!)
 // @author       JThweb
 // @match        https://www.geo-fs.com/geofs.php*
@@ -795,7 +795,7 @@
   setTimeout(() => FlightLogger.init(), 5000);
 
     // ======= Update check (English) =======
-  const CURRENT_VERSION = '5.0.3';
+  const CURRENT_VERSION = '5.0.4';
   const VERSION_JSON_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/version.json';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jthweb/JThweb/main/radar.user.js';
 (function checkUpdate() {
@@ -1545,7 +1545,7 @@ function buildPayload(snap) {
           <div class="geofs-radar-header-controls">
             <div class="geofs-radar-status"></div>
             <div class="geofs-radar-min-btn" id="minBtn" title="Minimize">_</div>
-            <div class="geofs-radar-min-btn" id="closeBtn" title="Hide (Press W)">×</div>
+            <div class="geofs-radar-min-btn" id="closeBtn" title="Hide (Press ])">×</div>
           </div>
         </div>
         <div class="geofs-radar-content" id="radarContent">
@@ -1704,7 +1704,7 @@ function buildPayload(snap) {
         e.stopPropagation();
         e.preventDefault();
         flightUI.style.display = 'none';
-        showToast('Press W to show Flight Info');
+        showToast('Press ] to show Flight Info');
     };
 
     // Auto-uppercase input fields
@@ -1913,9 +1913,9 @@ function buildPayload(snap) {
   
 
 
-  // --- Hotkey W to Toggle UI ---
+  // --- Hotkey ] to Toggle UI ---
   document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 'w') {
+    if (e.key === ']') {
       if (flightUI.style.display === 'none') {
         flightUI.style.display = 'block';
         showToast('Flight Info UI Shown');
